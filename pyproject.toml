@@ -1,0 +1,9 @@
+[project]
+name = "fantasyfootballbidmanager"
+version = "0.1.0"
+description = "Local Flask tools for managing a fantasy-football auction and notes"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "flask>=3.1.3",
+]

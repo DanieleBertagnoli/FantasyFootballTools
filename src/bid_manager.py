@@ -1,0 +1,972 @@
+"""Domain logic and HTTP API for the fantasy-football auction manager.
+
+The module keeps the auction model independent from Flask as much as possible.
+That makes import/export and the business rules straightforward to test, while
+the blueprint at the bottom only deals with requests and persistence.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import os
+import re
+import tempfile
+import uuid
+from collections.abc import Mapping, MutableMapping, Sequence
+from datetime import datetime, timezone
+from pathlib import Path
+from threading import RLock
+from typing import Any
+
+from flask import Blueprint, Response, current_app, jsonify, request, session
+
+
+SCHEMA_VERSION = 1
+SESSION_AUCTION_ID_KEY = "bid_manager_auction_id"
+DATA_DIRECTORY_CONFIG_KEY = "BID_MANAGER_DATA_DIR"
+DEFAULT_DATA_DIRECTORY_NAME = "bid_manager_auctions"
+
+ROLE_ORDER = ("goalkeepers", "defenders", "midfielders", "forwards")
+ROLE_LABELS = {
+    "goalkeepers": "Portieri",
+    "defenders": "Difensori",
+    "midfielders": "Centrocampisti",
+    "forwards": "Attaccanti",
+}
+
+_ROLE_ALIASES = {
+    "goalkeepers": "goalkeepers",
+    "goalkeeper": "goalkeepers",
+    "gk": "goalkeepers",
+    "portieri": "goalkeepers",
+    "portiere": "goalkeepers",
+    "defenders": "defenders",
+    "defender": "defenders",
+    "def": "defenders",
+    "difensori": "defenders",
+    "difensore": "defenders",
+    "midfielders": "midfielders",
+    "midfielder": "midfielders",
+    "mid": "midfielders",
+    "centrocampisti": "midfielders",
+    "centrocampista": "midfielders",
+    "forwards": "forwards",
+    "forward": "forwards",
+    "att": "forwards",
+    "attaccanti": "forwards",
+    "attaccante": "forwards",
+}
+
+_SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_INTEGER_PATTERN = re.compile(r"^[0-9]+$")
+_STORE_LOCK = RLock()
+
+
+class AuctionError(ValueError):
+    """Base exception for client-facing auction errors."""
+
+    status_code = 400
+
+
+class AuctionNotFoundError(AuctionError):
+    """Raised when an operation needs an active auction but none exists."""
+
+    status_code = 404
+
+
+class AuctionImportError(AuctionError):
+    """Raised when an uploaded JSON document cannot be imported."""
+
+
+class AuctionStorageError(AuctionError):
+    """Raised when the local JSON store cannot be read or written."""
+
+    status_code = 500
+
+
+def _utc_now() -> str:
+    """Return a stable, JSON-friendly UTC timestamp."""
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _new_id() -> str:
+    """Create a URL-safe identifier for auctions, participants, and sales."""
+
+    return uuid.uuid4().hex
+
+
+def _as_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise AuctionError(f"{field_name} must be an object.")
+    return value
+
+
+def _as_list(value: Any, field_name: str) -> Sequence[Any]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise AuctionError(f"{field_name} must be a list.")
+    return value
+
+
+def _normalise_text(value: Any, field_name: str, maximum_length: int) -> str:
+    if not isinstance(value, str):
+        raise AuctionError(f"{field_name} must be text.")
+
+    cleaned = " ".join(value.split())
+    if not cleaned:
+        raise AuctionError(f"{field_name} cannot be empty.")
+    if len(cleaned) > maximum_length:
+        raise AuctionError(f"{field_name} cannot exceed {maximum_length} characters.")
+    return cleaned
+
+
+def _normalise_integer(value: Any, field_name: str, minimum: int = 0) -> int:
+    """Accept JSON integers and integer-looking form values, never booleans."""
+
+    if isinstance(value, bool):
+        raise AuctionError(f"{field_name} must be a whole number.")
+
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, str) and _INTEGER_PATTERN.fullmatch(value.strip()):
+        number = int(value.strip())
+    else:
+        raise AuctionError(f"{field_name} must be a whole number.")
+
+    if number < minimum:
+        raise AuctionError(f"{field_name} must be at least {minimum}.")
+    return number
+
+
+def _normalise_id(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not _SAFE_ID_PATTERN.fullmatch(value):
+        raise AuctionError(f"{field_name} is invalid.")
+    return value
+
+
+def canonical_role(role: Any) -> str:
+    """Translate Italian and English role names to the exported role keys."""
+
+    if not isinstance(role, str):
+        raise AuctionError("A role name must be text.")
+
+    normalised = role.strip().lower().replace("-", "_").replace(" ", "_")
+    normalised = normalised.replace("_", "")
+    canonical = _ROLE_ALIASES.get(normalised)
+    if canonical is None:
+        raise AuctionError(f"Unsupported role: {role}.")
+    return canonical
+
+
+def normalise_role_limits(value: Any) -> dict[str, int]:
+    """Validate a complete role-limit object using canonical role keys."""
+
+    raw_limits = _as_mapping(value, "role_limits")
+    limits: dict[str, int] = {}
+
+    for supplied_role, supplied_limit in raw_limits.items():
+        role = canonical_role(supplied_role)
+        if role in limits:
+            raise AuctionError(f"The limit for {ROLE_LABELS[role].lower()} was supplied twice.")
+        limits[role] = _normalise_integer(
+            supplied_limit,
+            f"Player limit for {ROLE_LABELS[role].lower()}",
+        )
+
+    missing_roles = [ROLE_LABELS[role].lower() for role in ROLE_ORDER if role not in limits]
+    if missing_roles:
+        raise AuctionError(f"Missing player limits for: {', '.join(missing_roles)}.")
+    return {role: limits[role] for role in ROLE_ORDER}
+
+
+def _read_first(mapping: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
+
+
+def _normalise_participants_for_creation(
+    participants: Any,
+    default_credits: Any = None,
+    default_role_limits: Any = None,
+) -> list[dict[str, Any]]:
+    """Build canonical participant records from names or participant objects."""
+
+    supplied_participants = _as_list(participants, "participants")
+    if not supplied_participants:
+        raise AuctionError("At least one participant is required.")
+
+    default_limits = (
+        normalise_role_limits(default_role_limits)
+        if default_role_limits is not None
+        else None
+    )
+    normalised_participants: list[dict[str, Any]] = []
+    names_seen: set[str] = set()
+
+    for index, supplied_participant in enumerate(supplied_participants, start=1):
+        if isinstance(supplied_participant, str):
+            participant_data: Mapping[str, Any] = {"name": supplied_participant}
+        else:
+            participant_data = _as_mapping(
+                supplied_participant,
+                f"Participant {index}",
+            )
+
+        name = _normalise_text(
+            participant_data.get("name"),
+            f"Participant {index} name",
+            60,
+        )
+        name_key = name.casefold()
+        if name_key in names_seen:
+            raise AuctionError("Participant names must be unique.")
+        names_seen.add(name_key)
+
+        credits = _read_first(participant_data, "initial_credits", "credits", "budget")
+        if credits is None:
+            credits = default_credits
+        if credits is None:
+            raise AuctionError(f"Credits are missing for participant {name}.")
+
+        participant_limits = _read_first(
+            participant_data,
+            "role_limits",
+            "players_per_role",
+        )
+        if participant_limits is None:
+            participant_limits = default_limits
+        if participant_limits is None:
+            raise AuctionError(f"Player limits are missing for participant {name}.")
+
+        normalised_participants.append(
+            {
+                "id": _new_id(),
+                "name": name,
+                "initial_credits": _normalise_integer(
+                    credits,
+                    f"Credits for {name}",
+                ),
+                "role_limits": normalise_role_limits(participant_limits),
+            }
+        )
+
+    return normalised_participants
+
+
+def _normalise_stored_participants(value: Any) -> list[dict[str, Any]]:
+    """Validate participants from an exported auction, preserving their IDs."""
+
+    supplied_participants = _as_list(value, "participants")
+    if not supplied_participants:
+        raise AuctionImportError("The auction must contain at least one participant.")
+
+    normalised_participants: list[dict[str, Any]] = []
+    ids_seen: set[str] = set()
+    names_seen: set[str] = set()
+
+    for index, supplied_participant in enumerate(supplied_participants, start=1):
+        try:
+            participant_data = _as_mapping(supplied_participant, f"Participant {index}")
+            participant_id = _normalise_id(
+                participant_data.get("id"),
+                f"Participant {index} id",
+            )
+            name = _normalise_text(
+                participant_data.get("name"),
+                f"Participant {index} name",
+                60,
+            )
+            credits = _normalise_integer(
+                _read_first(participant_data, "initial_credits", "credits", "budget"),
+                f"Credits for {name}",
+            )
+            role_limits = normalise_role_limits(
+                _read_first(participant_data, "role_limits", "players_per_role"),
+            )
+        except AuctionError as error:
+            raise AuctionImportError(str(error)) from error
+
+        if participant_id in ids_seen:
+            raise AuctionImportError("Participant IDs must be unique.")
+        if name.casefold() in names_seen:
+            raise AuctionImportError("Participant names must be unique.")
+
+        ids_seen.add(participant_id)
+        names_seen.add(name.casefold())
+        normalised_participants.append(
+            {
+                "id": participant_id,
+                "name": name,
+                "initial_credits": credits,
+                "role_limits": role_limits,
+            }
+        )
+
+    return normalised_participants
+
+
+def _empty_role_counts(participants: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    return {
+        participant["id"]: {role: 0 for role in ROLE_ORDER}
+        for participant in participants
+    }
+
+
+def _current_role_from_counts(
+    participants: Sequence[Mapping[str, Any]],
+    role_counts: Mapping[str, Mapping[str, int]],
+) -> str | None:
+    """Apply the requested global-stage rule to determine the next role."""
+
+    for role in ROLE_ORDER:
+        everyone_finished_previous_stage = all(
+            role_counts[participant["id"]][role] >= participant["role_limits"][role]
+            for participant in participants
+        )
+        if not everyone_finished_previous_stage:
+            return role
+    return None
+
+
+def _normalise_timestamp(value: Any, fallback: str) -> str:
+    """Keep timestamps readable without making legacy imports needlessly fail."""
+
+    if value is None:
+        return fallback
+    if not isinstance(value, str) or not value.strip() or len(value) > 100:
+        raise AuctionImportError("A sale timestamp is invalid.")
+    return value.strip()
+
+
+def _replay_sales(
+    participants: Sequence[Mapping[str, Any]],
+    value: Any,
+) -> list[dict[str, Any]]:
+    """Normalize stored sales and validate credits and roster capacities.
+
+    A sale keeps its assigned role once it has been recorded.  This is vital
+    when an old sale is corrected or deleted: players auctioned afterwards
+    must not silently change role.  Legacy records without a role still derive
+    one from the current global stage while they are imported.
+    """
+
+    supplied_sales = _as_list(value, "sales")
+    participant_by_id = {participant["id"]: participant for participant in participants}
+    role_counts = _empty_role_counts(participants)
+    spent_credits = {participant["id"]: 0 for participant in participants}
+    sale_ids: set[str] = set()
+    rebuilt_sales: list[dict[str, Any]] = []
+
+    for index, supplied_sale in enumerate(supplied_sales, start=1):
+        try:
+            sale_data = _as_mapping(supplied_sale, f"Sale {index}")
+            sale_id = _normalise_id(sale_data.get("id"), f"Sale {index} id")
+            player_name = _normalise_text(
+                _read_first(sale_data, "player_name", "name"),
+                f"Player name for sale {index}",
+                120,
+            )
+            price = _normalise_integer(sale_data.get("price"), f"Price for {player_name}", 1)
+            participant_id = _normalise_id(
+                _read_first(sale_data, "participant_id", "buyer_id"),
+                f"Buyer id for {player_name}",
+            )
+            supplied_role = _read_first(
+                sale_data,
+                "role",
+                "role_key",
+                "position",
+                "ruolo",
+            )
+            sale_role = canonical_role(supplied_role) if supplied_role is not None else None
+            created_at = _normalise_timestamp(
+                _read_first(sale_data, "created_at", "sold_at"),
+                _utc_now(),
+            )
+        except AuctionError as error:
+            raise AuctionImportError(str(error)) from error
+
+        if sale_id in sale_ids:
+            raise AuctionImportError("Sale IDs must be unique.")
+        if participant_id not in participant_by_id:
+            raise AuctionImportError(f"The buyer for {player_name} does not exist.")
+
+        if sale_role is None:
+            sale_role = _current_role_from_counts(participants, role_counts)
+            if sale_role is None:
+                raise AuctionImportError(
+                    f"The auction is already complete; {player_name} cannot be added."
+                )
+
+        participant = participant_by_id[participant_id]
+        if role_counts[participant_id][sale_role] >= participant["role_limits"][sale_role]:
+            raise AuctionImportError(
+                f"{participant['name']} already has all allowed "
+                f"{ROLE_LABELS[sale_role].lower()}."
+            )
+        if spent_credits[participant_id] + price > participant["initial_credits"]:
+            raise AuctionImportError(
+                f"{participant['name']} does not have enough remaining credits for {player_name}."
+            )
+
+        sale_ids.add(sale_id)
+        role_counts[participant_id][sale_role] += 1
+        spent_credits[participant_id] += price
+        rebuilt_sales.append(
+            {
+                "id": sale_id,
+                "player_name": player_name,
+                "price": price,
+                "participant_id": participant_id,
+                "role": sale_role,
+                "created_at": created_at,
+            }
+        )
+
+    return rebuilt_sales
+
+
+def create_auction(
+    participants: Any,
+    credits: Any = None,
+    role_limits: Any = None,
+) -> dict[str, Any]:
+    """Create a new empty auction from a list of names or participant objects.
+
+    The common UI shape is `participants=["Nome", ...]`, plus shared
+    `credits` and `role_limits`.  Per-participant credits and limits are
+    also accepted for callers that need them.
+    """
+
+    now = _utc_now()
+    auction = {
+        "schema_version": SCHEMA_VERSION,
+        "id": _new_id(),
+        "created_at": now,
+        "updated_at": now,
+        "participants": _normalise_participants_for_creation(
+            participants,
+            default_credits=credits,
+            default_role_limits=role_limits,
+        ),
+        "sales": [],
+    }
+    return validate_auction(auction)
+
+
+def validate_auction(value: Any) -> dict[str, Any]:
+    """Return a canonical auction after checking its complete JSON model.
+
+    This is the single source of truth for imported data and state loaded from
+    disk.  It preserves a recorded sale's role so historical corrections do
+    not reassign players that were auctioned later.
+    """
+
+    try:
+        raw_auction = _as_mapping(value, "auction")
+        schema_version = raw_auction.get("schema_version", SCHEMA_VERSION)
+        if schema_version != SCHEMA_VERSION:
+            raise AuctionImportError(
+                f"Unsupported auction schema version: {schema_version}."
+            )
+
+        auction_id = _normalise_id(raw_auction.get("id"), "Auction id")
+        created_at = _normalise_timestamp(raw_auction.get("created_at"), _utc_now())
+        updated_at = _normalise_timestamp(raw_auction.get("updated_at"), created_at)
+        participants = _normalise_stored_participants(raw_auction.get("participants"))
+        sales = _replay_sales(participants, raw_auction.get("sales", []))
+    except AuctionImportError:
+        raise
+    except AuctionError as error:
+        raise AuctionImportError(str(error)) from error
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "id": auction_id,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "participants": participants,
+        "sales": sales,
+    }
+
+
+def import_auction(value: Any) -> dict[str, Any]:
+    """Parse an exported JSON string/bytes/object and return canonical state."""
+
+    decoded_value = value
+    if isinstance(value, bytes):
+        try:
+            decoded_value = value.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise AuctionImportError("The import file must be UTF-8 JSON.") from error
+
+    if isinstance(decoded_value, str):
+        try:
+            decoded_value = json.loads(decoded_value)
+        except json.JSONDecodeError as error:
+            raise AuctionImportError("The import file is not valid JSON.") from error
+
+    if not isinstance(decoded_value, Mapping):
+        raise AuctionImportError("The import data must be a JSON object.")
+
+    # Accept both the downloaded object and an API-shaped {"auction": ...} body.
+    raw_auction = decoded_value.get("auction", decoded_value)
+    return validate_auction(raw_auction)
+
+
+def export_auction(auction: Any, *, indent: int | None = 2) -> str:
+    """Serialize a validated auction in the portable JSON export format."""
+
+    return json.dumps(
+        validate_auction(auction),
+        ensure_ascii=False,
+        indent=indent,
+    )
+
+
+def _sale_index(sales: Sequence[Mapping[str, Any]], sale_id: Any) -> int:
+    normalised_id = _normalise_id(sale_id, "Sale id")
+    for index, sale in enumerate(sales):
+        if sale["id"] == normalised_id:
+            return index
+    raise AuctionNotFoundError("The selected auction sale does not exist.")
+
+
+def add_sale(
+    auction: Any,
+    player_name: Any,
+    price: Any,
+    participant_id: Any,
+) -> dict[str, Any]:
+    """Append a player sale and reject credit or roster-slot overflows."""
+
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    candidate["sales"].append(
+        {
+            "id": _new_id(),
+            "player_name": _normalise_text(player_name, "Player name", 120),
+            "price": _normalise_integer(price, "Price", 1),
+            "participant_id": _normalise_id(participant_id, "Buyer id"),
+            "created_at": _utc_now(),
+        }
+    )
+    candidate["updated_at"] = _utc_now()
+
+    try:
+        return validate_auction(candidate)
+    except AuctionImportError as error:
+        raise AuctionError(str(error)) from error
+
+
+def edit_sale(
+    auction: Any,
+    sale_id: Any,
+    *,
+    price: Any,
+    participant_id: Any,
+) -> dict[str, Any]:
+    """Change only the buyer and/or price of a historical sale.
+
+    Existing sales are replayed after the edit.  This recalculates later role
+    assignments and prevents a correction from making a later record exceed a
+    budget or role limit.
+    """
+
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    index = _sale_index(candidate["sales"], sale_id)
+    sale = candidate["sales"][index]
+
+    if price is None and participant_id is None:
+        raise AuctionError("Provide a new price, a new buyer, or both.")
+    if price is not None:
+        sale["price"] = _normalise_integer(price, "Price", 1)
+    if participant_id is not None:
+        sale["participant_id"] = _normalise_id(participant_id, "Buyer id")
+    candidate["updated_at"] = _utc_now()
+
+    try:
+        return validate_auction(candidate)
+    except AuctionImportError as error:
+        raise AuctionError(str(error)) from error
+
+
+def delete_sale(auction: Any, sale_id: Any) -> dict[str, Any]:
+    """Delete a sale and replay the remaining chronological auction history."""
+
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    index = _sale_index(candidate["sales"], sale_id)
+    del candidate["sales"][index]
+    candidate["updated_at"] = _utc_now()
+
+    try:
+        return validate_auction(candidate)
+    except AuctionImportError as error:
+        raise AuctionError(str(error)) from error
+
+
+def _public_sale(sale: Mapping[str, Any], participant_name: str) -> dict[str, Any]:
+    """Add display-friendly aliases without mutating the persisted model."""
+
+    return {
+        "id": sale["id"],
+        "name": sale["player_name"],
+        "player_name": sale["player_name"],
+        "price": sale["price"],
+        "participant_id": sale["participant_id"],
+        "participant_name": participant_name,
+        "role": sale["role"],
+        "role_label": ROLE_LABELS[sale["role"]],
+        "created_at": sale["created_at"],
+    }
+
+
+def auction_state(auction: Any) -> dict[str, Any]:
+    """Return the frontend-oriented view of an auction.
+
+    Persisted sales are chronological; the `sales` array returned here is
+    reversed so the latest sale appears first in the bottom activity panel.
+    """
+
+    canonical_auction = validate_auction(auction)
+    participants = canonical_auction["participants"]
+    participant_by_id = {participant["id"]: participant for participant in participants}
+    role_counts = _empty_role_counts(participants)
+    spent_credits = {participant["id"]: 0 for participant in participants}
+    rosters = {
+        participant["id"]: {role: [] for role in ROLE_ORDER}
+        for participant in participants
+    }
+    public_sales: list[dict[str, Any]] = []
+
+    for sale in canonical_auction["sales"]:
+        participant_id = sale["participant_id"]
+        participant = participant_by_id[participant_id]
+        public_sale = _public_sale(sale, participant["name"])
+        role_counts[participant_id][sale["role"]] += 1
+        spent_credits[participant_id] += sale["price"]
+        rosters[participant_id][sale["role"]].append(public_sale)
+        public_sales.append(public_sale)
+
+    public_participants = []
+    for participant in participants:
+        participant_id = participant["id"]
+        public_participants.append(
+            {
+                "id": participant_id,
+                "name": participant["name"],
+                "initial_credits": participant["initial_credits"],
+                "spent_credits": spent_credits[participant_id],
+                "remaining_credits": participant["initial_credits"]
+                - spent_credits[participant_id],
+                "role_limits": copy.deepcopy(participant["role_limits"]),
+                "roster": rosters[participant_id],
+            }
+        )
+
+    current_role = _current_role_from_counts(participants, role_counts)
+    progress = {
+        role: {
+            "label": ROLE_LABELS[role],
+            "sold": sum(role_counts[participant["id"]][role] for participant in participants),
+            "required": sum(
+                participant["role_limits"][role] for participant in participants
+            ),
+            "complete": all(
+                role_counts[participant["id"]][role]
+                >= participant["role_limits"][role]
+                for participant in participants
+            ),
+            "participants": [
+                {
+                    "participant_id": participant["id"],
+                    "filled": role_counts[participant["id"]][role],
+                    "limit": participant["role_limits"][role],
+                }
+                for participant in participants
+            ],
+        }
+        for role in ROLE_ORDER
+    }
+
+    return {
+        "id": canonical_auction["id"],
+        "schema_version": SCHEMA_VERSION,
+        "created_at": canonical_auction["created_at"],
+        "updated_at": canonical_auction["updated_at"],
+        "participants": public_participants,
+        "sales": list(reversed(public_sales)),
+        "current_role": current_role,
+        "current_role_label": ROLE_LABELS.get(current_role),
+        "auction_complete": current_role is None,
+        "role_order": list(ROLE_ORDER),
+        "role_labels": copy.deepcopy(ROLE_LABELS),
+        "progress": progress,
+    }
+
+
+class JsonAuctionStore:
+    """Read and atomically write one portable auction JSON document."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+
+    def load(self) -> dict[str, Any]:
+        if not self.path.is_file():
+            raise AuctionNotFoundError("The saved auction could not be found.")
+
+        try:
+            raw_data = self.path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise AuctionStorageError("The saved auction could not be read.") from error
+        return import_auction(raw_data)
+
+    def save(self, auction: Any) -> dict[str, Any]:
+        canonical_auction = validate_auction(auction)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{self.path.stem}-",
+                suffix=".tmp",
+                dir=self.path.parent,
+                text=True,
+            )
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as temporary_file:
+                    temporary_file.write(export_auction(canonical_auction))
+                    temporary_file.write("\n")
+                os.replace(temporary_name, self.path)
+            except BaseException:
+                try:
+                    os.unlink(temporary_name)
+                except FileNotFoundError:
+                    pass
+                raise
+        except OSError as error:
+            raise AuctionStorageError("The auction could not be saved locally.") from error
+        return canonical_auction
+
+
+class AuctionRepository:
+    """A directory-backed store whose files are isolated by auction ID."""
+
+    def __init__(self, directory: str | Path) -> None:
+        self.directory = Path(directory)
+
+    def _store_for(self, auction_id: Any) -> JsonAuctionStore:
+        normalised_id = _normalise_id(auction_id, "Auction id")
+        return JsonAuctionStore(self.directory / f"{normalised_id}.json")
+
+    def exists(self, auction_id: Any) -> bool:
+        return self._store_for(auction_id).path.is_file()
+
+    def load(self, auction_id: Any) -> dict[str, Any]:
+        return self._store_for(auction_id).load()
+
+    def save(self, auction: Any) -> dict[str, Any]:
+        canonical_auction = validate_auction(auction)
+        return self._store_for(canonical_auction["id"]).save(canonical_auction)
+
+
+def _repository_for_current_app() -> AuctionRepository:
+    configured_directory = current_app.config.get(DATA_DIRECTORY_CONFIG_KEY)
+    directory = (
+        Path(configured_directory)
+        if configured_directory
+        else Path(current_app.instance_path) / DEFAULT_DATA_DIRECTORY_NAME
+    )
+    return AuctionRepository(directory)
+
+
+def _mark_session_modified(session_data: MutableMapping[str, Any]) -> None:
+    """Tell Flask's session implementation that a nested state value changed."""
+
+    if hasattr(session_data, "modified"):
+        session_data.modified = True  # type: ignore[attr-defined]
+
+
+def load_active_auction(
+    session_data: MutableMapping[str, Any],
+    repository: AuctionRepository,
+) -> dict[str, Any]:
+    """Load the active auction selected by a small session key."""
+
+    auction_id = session_data.get(SESSION_AUCTION_ID_KEY)
+    if not auction_id:
+        raise AuctionNotFoundError("No active auction has been selected.")
+    try:
+        return repository.load(auction_id)
+    except AuctionNotFoundError:
+        session_data.pop(SESSION_AUCTION_ID_KEY, None)
+        _mark_session_modified(session_data)
+        raise
+
+
+def save_active_auction(
+    session_data: MutableMapping[str, Any],
+    repository: AuctionRepository,
+    auction: Any,
+) -> dict[str, Any]:
+    """Persist an auction and store only its lightweight ID in the session."""
+
+    saved_auction = repository.save(auction)
+    session_data[SESSION_AUCTION_ID_KEY] = saved_auction["id"]
+    _mark_session_modified(session_data)
+    return saved_auction
+
+
+def _request_object() -> Mapping[str, Any]:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, Mapping):
+        raise AuctionError("Request body must be a JSON object.")
+    return payload
+
+
+def _request_import_payload() -> Any:
+    """Accept a direct JSON export, an API wrapper, or a JSON upload field."""
+
+    uploaded_file = request.files.get("file")
+    if uploaded_file is not None:
+        file_data = uploaded_file.read(1_000_001)
+        if len(file_data) > 1_000_000:
+            raise AuctionImportError("The import file is too large.")
+        return file_data
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        raise AuctionImportError("Upload a JSON file or send a JSON auction object.")
+    return payload
+
+
+def _create_from_request(payload: Mapping[str, Any]) -> dict[str, Any]:
+    participants = _read_first(payload, "participants", "participant_names")
+    credits = _read_first(payload, "credits", "initial_credits", "budget")
+    role_limits = _read_first(payload, "role_limits", "players_per_role")
+    return create_auction(participants, credits, role_limits)
+
+
+bid_bp = Blueprint("bid_manager", __name__)
+
+
+@bid_bp.errorhandler(AuctionError)
+def _handle_auction_error(error: AuctionError):
+    return jsonify({"error": str(error)}), error.status_code
+
+
+@bid_bp.get("/api/auction")
+def get_auction():
+    """Return the active auction, or `null` before one has been created."""
+
+    repository = _repository_for_current_app()
+    try:
+        with _STORE_LOCK:
+            auction = load_active_auction(session, repository)
+    except AuctionNotFoundError:
+        return jsonify({"auction": None})
+    return jsonify({"auction": auction_state(auction)})
+
+
+@bid_bp.post("/api/auction")
+def create_auction_endpoint():
+    """Start a new auction and make it the current session's active auction."""
+
+    payload = _request_object()
+    auction = _create_from_request(payload)
+    with _STORE_LOCK:
+        saved_auction = save_active_auction(session, _repository_for_current_app(), auction)
+    return jsonify({"auction": auction_state(saved_auction)}), 201
+
+
+@bid_bp.post("/api/auction/import")
+def import_auction_endpoint():
+    """Restore a user-exported auction as a new local saved auction."""
+
+    imported_auction = import_auction(_request_import_payload())
+    # Treat every import as a new local copy.  This avoids one browser session
+    # silently overwriting another session's file with the same exported ID.
+    imported_auction["id"] = _new_id()
+    imported_auction["updated_at"] = _utc_now()
+    with _STORE_LOCK:
+        saved_auction = save_active_auction(
+            session,
+            _repository_for_current_app(),
+            imported_auction,
+        )
+    return jsonify({"auction": auction_state(saved_auction)}), 201
+
+
+@bid_bp.get("/api/auction/export")
+def export_auction_endpoint():
+    """Download the active auction in the portable JSON format."""
+
+    with _STORE_LOCK:
+        auction = load_active_auction(session, _repository_for_current_app())
+    document = export_auction(auction)
+    return Response(
+        document,
+        mimetype="application/json",
+        headers={
+            "Content-Disposition": "attachment; filename=fantacalcio-asta.json",
+        },
+    )
+
+
+@bid_bp.post("/api/auction/players")
+def add_player_endpoint():
+    """Record a new auction sale in the role currently being auctioned."""
+
+    payload = _request_object()
+    player_name = _read_first(payload, "name", "player_name")
+    price = payload.get("price")
+    participant_id = _read_first(payload, "participant_id", "buyer_id")
+
+    with _STORE_LOCK:
+        repository = _repository_for_current_app()
+        auction = load_active_auction(session, repository)
+        updated_auction = add_sale(auction, player_name, price, participant_id)
+        saved_auction = save_active_auction(session, repository, updated_auction)
+    return jsonify({"auction": auction_state(saved_auction)}), 201
+
+
+@bid_bp.patch("/api/auction/players/<sale_id>")
+def edit_player_endpoint(sale_id: str):
+    """Correct the price and/or buyer of an existing auction sale."""
+
+    payload = _request_object()
+    if "name" in payload or "player_name" in payload:
+        raise AuctionError("A player's name cannot be edited. Delete and add the sale again.")
+
+    price = payload["price"] if "price" in payload else None
+    participant_id = (
+        _read_first(payload, "participant_id", "buyer_id")
+        if "participant_id" in payload or "buyer_id" in payload
+        else None
+    )
+    with _STORE_LOCK:
+        repository = _repository_for_current_app()
+        auction = load_active_auction(session, repository)
+        updated_auction = edit_sale(
+            auction,
+            sale_id,
+            price=price,
+            participant_id=participant_id,
+        )
+        saved_auction = save_active_auction(session, repository, updated_auction)
+    return jsonify({"auction": auction_state(saved_auction)})
+
+
+@bid_bp.delete("/api/auction/players/<sale_id>")
+def delete_player_endpoint(sale_id: str):
+    """Remove an auction sale so the player can be auctioned again."""
+
+    with _STORE_LOCK:
+        repository = _repository_for_current_app()
+        auction = load_active_auction(session, repository)
+        updated_auction = delete_sale(auction, sale_id)
+        saved_auction = save_active_auction(session, repository, updated_auction)
+    return jsonify({"auction": auction_state(saved_auction)})

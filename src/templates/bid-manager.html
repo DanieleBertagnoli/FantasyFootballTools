@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="it">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Gestisci in tempo reale crediti, rose e battute della tua asta di fantacalcio.">
+  <title>FantAsta | Bid Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script defer src="{{ url_for('static', filename='js/bid_manager.js') }}"></script>
+</head>
+
+<body class="auction-page">
+  <div class="auction-background" aria-hidden="true"></div>
+
+  <header class="site-header auction-site-header">
+    <a class="brand" href="{{ url_for('home') }}" aria-label="Torna alla dashboard FantAsta">
+      <span class="brand-mark" aria-hidden="true">⚽</span>
+      <span>Fant<span>Asta</span></span>
+    </a>
+
+    <div class="auction-header-actions">
+      <a class="header-link" href="{{ url_for('home') }}">
+        <span aria-hidden="true">⌂</span> Dashboard
+      </a>
+      <button class="button button-quiet" type="button" data-action="show-setup">
+        <span aria-hidden="true">+</span> Nuova asta
+      </button>
+      <button class="button button-primary button-export" type="button" data-action="export-auction">
+        <span aria-hidden="true">⇩</span> Esporta JSON
+      </button>
+    </div>
+  </header>
+
+  <main id="auctionApp" class="auction-app">
+    <section id="auctionLoading" class="auction-loading" aria-live="polite">
+      <span class="loading-ball" aria-hidden="true">⚽</span>
+      <p>Sto preparando il tabellone dell'asta…</p>
+    </section>
+
+    <section id="setupView" class="setup-view" hidden aria-labelledby="setupTitle">
+      <div class="setup-intro">
+        <p class="eyebrow">Bid Manager</p>
+        <h1 id="setupTitle">La tua asta, sotto controllo.</h1>
+        <p>
+          Crea un nuovo tabellone oppure riparti da un'asta salvata. Crediti, rose e battute
+          restano sempre sincronizzati.
+        </p>
+        <button id="returnAuctionButton" class="button button-secondary setup-return" type="button"
+          data-action="return-auction" hidden>
+          ← Torna all'asta in corso
+        </button>
+      </div>
+
+      <div class="setup-grid">
+        <section class="setup-card setup-card-create" aria-labelledby="createAuctionTitle">
+          <div class="card-heading">
+            <span class="card-icon" aria-hidden="true">🏟️</span>
+            <div>
+              <p class="section-kicker">Parti da zero</p>
+              <h2 id="createAuctionTitle">Crea una nuova asta</h2>
+            </div>
+          </div>
+
+          <form id="newAuctionForm" class="auction-form" novalidate>
+            <div class="form-grid form-grid-two">
+              <label class="field">
+                <span>Partecipanti</span>
+                <input id="participantCount" name="participantCount" type="number" min="2" max="20" value="8" required>
+              </label>
+              <label class="field">
+                <span>Crediti per partecipante</span>
+                <input id="startingCredits" name="startingCredits" type="number" min="1" step="1" value="500" required>
+              </label>
+            </div>
+
+            <fieldset class="role-limits">
+              <legend>Composizione della rosa</legend>
+              <div class="role-limit-grid">
+                <label class="role-limit-field">
+                  <span class="role-badge role-badge-goalkeepers">P</span>
+                  <span>Portieri</span>
+                  <input name="goalkeepers" type="number" min="0" max="10" value="3" required>
+                </label>
+                <label class="role-limit-field">
+                  <span class="role-badge role-badge-defenders">D</span>
+                  <span>Difensori</span>
+                  <input name="defenders" type="number" min="0" max="15" value="8" required>
+                </label>
+                <label class="role-limit-field">
+                  <span class="role-badge role-badge-midfielders">C</span>
+                  <span>Centrocampisti</span>
+                  <input name="midfielders" type="number" min="0" max="15" value="8" required>
+                </label>
+                <label class="role-limit-field">
+                  <span class="role-badge role-badge-forwards">A</span>
+                  <span>Attaccanti</span>
+                  <input name="forwards" type="number" min="0" max="15" value="6" required>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="participant-names-heading">
+              <div>
+                <p class="section-kicker">Le squadre</p>
+                <h3>Nome dei partecipanti</h3>
+              </div>
+              <span id="participantNameCount" class="counter-pill">8 partecipanti</span>
+            </div>
+            <div id="participantNameList" class="participant-name-list"></div>
+
+            <button class="button button-primary button-large" type="submit">
+              Inizia l'asta <span aria-hidden="true">→</span>
+            </button>
+          </form>
+        </section>
+
+        <aside class="setup-side-column">
+          <section class="setup-card setup-card-import" aria-labelledby="importAuctionTitle">
+            <span class="card-icon card-icon-alt" aria-hidden="true">📥</span>
+            <p class="section-kicker">Riprendi da dove eri</p>
+            <h2 id="importAuctionTitle">Importa un'asta</h2>
+            <p>
+              Carica il file JSON esportato in precedenza per ripristinare immediatamente lo stato
+              della tua lega.
+            </p>
+            <input id="importFile" type="file" accept="application/json,.json" hidden>
+            <button class="import-dropzone" type="button" data-action="choose-import">
+              <span aria-hidden="true">+</span>
+              <strong>Scegli un file JSON</strong>
+              <small>oppure trascinalo qui</small>
+            </button>
+          </section>
+
+          <section class="setup-tip" aria-label="Come funziona l'asta">
+            <span aria-hidden="true">💡</span>
+            <div>
+              <h2>Un passaggio alla volta</h2>
+              <p>
+                Il ruolo avanza automaticamente quando tutti hanno completato quello precedente.
+              </p>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section id="auctionView" class="auction-workspace" hidden aria-label="Asta in corso">
+      <aside class="participant-rail" aria-labelledby="participantsTitle">
+        <div class="rail-heading">
+          <div>
+            <p class="section-kicker">Bilancio live</p>
+            <h2 id="participantsTitle">Partecipanti</h2>
+          </div>
+          <span id="participantsTotal" class="counter-pill"></span>
+        </div>
+        <p class="rail-helper">Seleziona una squadra per vedere la rosa.</p>
+        <div id="participantsList" class="participants-list"></div>
+      </aside>
+
+      <section class="auction-stage" aria-labelledby="currentRoleTitle">
+        <div class="stage-topline">
+          <div>
+            <p class="section-kicker">Fase attuale</p>
+            <h1 id="currentRoleTitle"><span id="currentRolePrefix">Asta per i </span><span
+                id="currentRoleName">PORTIERI</span></h1>
+          </div>
+          <div id="roleProgress" class="role-progress" aria-live="polite"></div>
+        </div>
+
+        <section class="sale-panel" aria-labelledby="saleTitle">
+          <div class="sale-panel-heading">
+            <div>
+              <p class="section-kicker">Registra una battuta</p>
+              <h2 id="saleTitle">Giocatore aggiudicato</h2>
+            </div>
+            <span class="live-indicator"><i aria-hidden="true"></i> Asta live</span>
+          </div>
+
+          <form id="saleForm" class="sale-form" novalidate>
+            <label class="field field-player">
+              <span>Nome del giocatore</span>
+              <input id="playerName" name="playerName" type="text" maxlength="80" autocomplete="off"
+                placeholder="Es. Lautaro Martínez" required>
+            </label>
+            <label class="field field-price">
+              <span>Prezzo finale</span>
+              <div class="input-with-suffix">
+                <input id="salePrice" name="salePrice" type="number" min="1" step="1" inputmode="numeric"
+                  placeholder="0" required>
+                <span>cr</span>
+              </div>
+            </label>
+            <label class="field field-buyer">
+              <span>Acquirente</span>
+              <select id="buyerSelect" name="buyer" required>
+                <option value="">Seleziona una squadra</option>
+              </select>
+            </label>
+            <button class="button button-primary button-sell" type="submit">
+              Conferma <span aria-hidden="true">→</span>
+            </button>
+          </form>
+          <p id="saleHint" class="sale-hint">Inserisci i dati della battuta appena conclusa.</p>
+        </section>
+
+        <section class="auction-guide" aria-label="Riepilogo della fase corrente">
+          <div class="auction-guide-icon" id="currentRoleIcon" aria-hidden="true">🧤</div>
+          <div>
+            <strong id="guideTitle">Si parte dai portieri.</strong>
+            <p id="guideText">Il ruolo cambierà quando tutte le squadre avranno completato gli slot disponibili.</p>
+          </div>
+        </section>
+      </section>
+
+      <aside id="rosterPanel" class="roster-panel" hidden aria-labelledby="rosterTitle">
+        <div class="roster-panel-heading">
+          <div>
+            <p class="section-kicker">Rosa attuale</p>
+            <h2 id="rosterTitle">Seleziona una squadra</h2>
+          </div>
+          <button class="icon-button" type="button" data-action="close-roster" aria-label="Chiudi la rosa">×</button>
+        </div>
+        <div id="rosterSummary" class="roster-summary"></div>
+        <div id="rosterGroups" class="roster-groups"></div>
+      </aside>
+
+      <section class="auction-history" aria-labelledby="historyTitle">
+        <div class="history-heading">
+          <div>
+            <p class="section-kicker">Ultime battute</p>
+            <h2 id="historyTitle">Registro dell’asta</h2>
+          </div>
+          <span id="historyCount" class="counter-pill">0 giocatori</span>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="editSaleDialog" class="auction-dialog" aria-labelledby="editSaleTitle">
+    <form id="editSaleForm" class="dialog-card" method="dialog" novalidate>
+      <div class="dialog-heading">
+        <div>
+          <p class="section-kicker">Correggi una battuta</p>
+          <h2 id="editSaleTitle">Modifica aggiudicazione</h2>
+        </div>
+        <button class="icon-button" type="button" data-action="close-edit" aria-label="Chiudi">×</button>
+      </div>
+      <label class="field">
+        <span>Giocatore</span>
+        <input id="editPlayerName" type="text" readonly>
+        <small>Per cambiare giocatore, elimina questa battuta e registrala di nuovo.</small>
+      </label>
+      <div class="form-grid form-grid-two">
+        <label class="field">
+          <span>Prezzo finale</span>
+          <div class="input-with-suffix">
+            <input id="editSalePrice" type="number" min="1" step="1" required>
+            <span>cr</span>
+          </div>
+        </label>
+        <label class="field">
+          <span>Acquirente</span>
+          <select id="editBuyerSelect" required></select>
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button class="button button-secondary" type="button" data-action="close-edit">Annulla</button>
+        <button class="button button-primary" type="submit">Salva modifiche</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="deleteSaleDialog" class="auction-dialog auction-dialog-small" aria-labelledby="deleteSaleTitle">
+    <form id="deleteSaleForm" class="dialog-card" method="dialog">
+      <span class="dialog-warning-icon" aria-hidden="true">⚠️</span>
+      <p class="section-kicker">Attenzione</p>
+      <h2 id="deleteSaleTitle">Eliminare questa battuta?</h2>
+      <p id="deleteSaleMessage">I crediti e la rosa verranno ricalcolati automaticamente.</p>
+      <div class="dialog-actions">
+        <button class="button button-secondary" value="cancel">Annulla</button>
+        <button id="confirmDeleteButton" class="button button-danger" type="submit">Elimina battuta</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+</body>
+
+</html>

@@ -1,0 +1,8 @@
+services:
+    fantasy-football-tools:
+        restart: always
+        build: .
+        ports:
+            - "5010:5010"
+        environment:
+            FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-local-development-key-change-before-deployment}

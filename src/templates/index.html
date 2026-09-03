@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="it">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Strumenti locali per organizzare l'asta e le note della tua lega di fantacalcio.">
+  <title>FantAsta | Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body class="landing-page">
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand" href="{{ url_for('home') }}" aria-label="Torna alla dashboard FantAsta">
+        <span class="brand-mark" aria-hidden="true">⚽</span>
+        <span>Fant<span>Asta</span></span>
+      </a>
+      <span class="header-status"><span aria-hidden="true">●</span> Strumenti della lega</span>
+    </header>
+
+    <main class="landing-main">
+      <section class="landing-hero" aria-labelledby="dashboard-title">
+        <div>
+          <p class="eyebrow">La cabina di regia della tua lega</p>
+          <h1 id="dashboard-title">Pronti a costruire una squadra da sogno?</h1>
+          <p class="hero-copy">
+            Scegli lo strumento giusto e tieni ogni decisione dell'asta sotto controllo.
+          </p>
+        </div>
+        <img class="landing-hero-image" src="{{ url_for('static', filename='images/auction-hero.png') }}"
+          alt="Stadio di calcio illuminato visto dall'alto">
+      </section>
+
+      <section class="tool-grid" aria-label="Strumenti disponibili">
+        <article class="tool-card tool-card-primary">
+          <div class="tool-card-icon" aria-hidden="true">🏟️</div>
+          <div>
+            <p class="tool-card-label">Disponibile ora</p>
+            <h2>Bid Manager</h2>
+            <p>
+              Gestisci crediti, rose e giocatori battuti in un'unica schermata durante l'asta.
+            </p>
+          </div>
+          <a class="button button-primary" href="{{ url_for('bid_manager') }}">
+            Apri il Bid Manager <span aria-hidden="true">→</span>
+          </a>
+        </article>
+
+        <article class="tool-card tool-card-muted">
+          <div class="tool-card-icon" aria-hidden="true">🗒️</div>
+          <div>
+            <p class="tool-card-label">Disponibile ora</p>
+            <h2>Notes Manager</h2>
+            <p>
+              Organizza fasce, percentuali di budget e osservazioni sui giocatori prima dell’asta.
+            </p>
+          </div>
+          <a class="button button-secondary" href="{{ url_for('notes_manager') }}">
+            Apri il Notes Manager <span aria-hidden="true">→</span>
+          </a>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>FantAsta</span>
+      <span aria-hidden="true">•</span>
+      <span>Organizza. Rilancia. Vinci.</span>
+    </footer>
+  </div>
+</body>
+
+</html>

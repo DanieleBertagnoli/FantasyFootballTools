@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="it">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Organizza le tue valutazioni sui giocatori prima dell'asta di fantacalcio.">
+  <title>FantAsta | Notes Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script defer src="{{ url_for('static', filename='js/notes_manager.js') }}"></script>
+</head>
+
+<body class="notes-page">
+  <div class="notes-background" aria-hidden="true"></div>
+
+  <header class="site-header notes-site-header">
+    <a class="brand" href="{{ url_for('home') }}" aria-label="Torna alla dashboard FantAsta">
+      <span class="brand-mark" aria-hidden="true">⚽</span>
+      <span>Fant<span>Asta</span></span>
+    </a>
+
+    <div class="notes-header-actions">
+      <a class="header-link" href="{{ url_for('home') }}">
+        <span aria-hidden="true">⌂</span> Dashboard
+      </a>
+      <button class="button button-quiet" type="button" data-action="show-setup">
+        <span aria-hidden="true">+</span> Nuove note
+      </button>
+      <button id="exportJsonButton" class="button button-secondary notes-export-button" type="button"
+        data-action="export-json" aria-label="Esporta le note in JSON" title="Esporta JSON">
+        <span aria-hidden="true">⇩</span> Esporta JSON
+      </button>
+      <button id="exportMarkdownButton" class="button button-primary notes-export-button" type="button"
+        data-action="export-markdown" aria-label="Esporta le note in Markdown" title="Esporta Markdown">
+        <span aria-hidden="true">⌘</span> Esporta Markdown
+      </button>
+    </div>
+  </header>
+
+  <main id="notesApp" class="notes-app">
+    <section id="notesLoading" class="notes-loading" aria-live="polite">
+      <span class="loading-ball" aria-hidden="true">🗒️</span>
+      <p>Sto preparando il taccuino della tua asta…</p>
+    </section>
+
+    <section id="notesSetupView" class="setup-view notes-setup-view" hidden aria-labelledby="notesSetupTitle">
+      <div class="setup-intro notes-setup-intro">
+        <p class="eyebrow">Notes Manager</p>
+        <h1 id="notesSetupTitle">Costruisci la tua lista dei desideri.</h1>
+        <p>
+          Crea fasce personalizzate, annota le priorità e arriva all'asta con una strategia già pronta.
+        </p>
+        <button id="returnNotesButton" class="button button-secondary setup-return" type="button"
+          data-action="return-notes" hidden>
+          ← Torna alle note in corso
+        </button>
+      </div>
+
+      <div class="setup-grid notes-setup-grid">
+        <section class="setup-card setup-card-create notes-setup-card" aria-labelledby="createNotesTitle">
+          <div class="card-heading">
+            <span class="card-icon" aria-hidden="true">📓</span>
+            <div>
+              <p class="section-kicker">Parti da zero</p>
+              <h2 id="createNotesTitle">Crea una raccolta</h2>
+            </div>
+          </div>
+
+          <form id="newNotesForm" class="auction-form notes-setup-form" novalidate>
+            <div class="form-grid form-grid-two">
+              <label class="field">
+                <span>Nome della raccolta</span>
+                <input id="notesTitle" name="title" type="text" maxlength="80" autocomplete="off"
+                  placeholder="Es. Asta Serie A 2026/27">
+                <small>Facoltativo: ti aiuta a riconoscere l'esportazione.</small>
+              </label>
+              <label class="field">
+                <span>Numero di fasce</span>
+                <input id="tierCount" name="tierCount" type="number" min="1" max="12" value="4" required>
+                <small>Potrai nominare ogni fascia qui sotto.</small>
+              </label>
+            </div>
+
+            <div class="participant-names-heading notes-tier-heading">
+              <div>
+                <p class="section-kicker">La tua scala di priorità</p>
+                <h3>Nome delle fasce</h3>
+              </div>
+              <span id="tierNameCount" class="counter-pill">4 fasce</span>
+            </div>
+            <div id="tierNameList" class="participant-name-list notes-tier-name-list"></div>
+
+            <button class="button button-primary button-large" type="submit">
+              Apri il taccuino <span aria-hidden="true">→</span>
+            </button>
+          </form>
+        </section>
+
+        <aside class="setup-side-column notes-setup-side-column">
+          <section class="setup-card setup-card-import notes-import-card" aria-labelledby="importNotesTitle">
+            <span class="card-icon card-icon-alt" aria-hidden="true">📥</span>
+            <p class="section-kicker">Riprendi da dove eri</p>
+            <h2 id="importNotesTitle">Importa le note</h2>
+            <p>
+              Carica il JSON esportato in precedenza: fasce e schede giocatore saranno ripristinate subito.
+            </p>
+            <input id="notesImportFile" type="file" accept="application/json,.json" hidden>
+            <button id="notesImportDropzone" class="import-dropzone notes-import-dropzone" type="button"
+              data-action="choose-import">
+              <span aria-hidden="true">+</span>
+              <strong>Scegli un file JSON</strong>
+              <small>oppure trascinalo qui</small>
+            </button>
+          </section>
+
+          <section class="setup-tip notes-setup-tip" aria-label="Come funzionano le note">
+            <span aria-hidden="true">💡</span>
+            <div>
+              <h2>Una scheda, una decisione</h2>
+              <p>
+                Inserisci ruolo, fascia, budget ideale e una nota: l'export Markdown creerà le tabelle già ordinate.
+              </p>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section id="notesWorkspace" class="notes-workspace" hidden aria-label="Appunti sui giocatori">
+      <aside class="notes-overview" aria-labelledby="notesOverviewTitle">
+        <div class="notes-overview-heading">
+          <div>
+            <p class="section-kicker">Taccuino attivo</p>
+            <h2 id="notesOverviewTitle">Riepilogo</h2>
+          </div>
+          <span id="notesPlayerTotal" class="counter-pill">0 giocatori</span>
+        </div>
+        <p id="notesCollectionTitle" class="notes-collection-title">Le mie note d'asta</p>
+        <div id="notesStats" class="notes-stats"></div>
+
+        <div class="notes-tier-overview-heading">
+          <p class="section-kicker">Fasce impostate</p>
+          <span id="notesTierTotal" class="counter-pill">0 fasce</span>
+        </div>
+        <div id="notesTierOverview" class="notes-tier-overview"></div>
+      </aside>
+
+      <section class="notes-stage" aria-labelledby="notesStageTitle">
+        <div class="stage-topline notes-stage-topline">
+          <div>
+            <p class="section-kicker">Prepara l'asta</p>
+            <h1 id="notesStageTitle">Scheda giocatore</h1>
+          </div>
+          <div class="notes-stage-badge" aria-label="Le note vengono salvate automaticamente sul server">
+            <span aria-hidden="true">●</span> Pronto all'asta
+          </div>
+        </div>
+
+        <section class="sale-panel notes-entry-panel" aria-labelledby="addPlayerTitle">
+          <div class="sale-panel-heading">
+            <div>
+              <p class="section-kicker">Nuova osservazione</p>
+              <h2 id="addPlayerTitle">Aggiungi un giocatore</h2>
+            </div>
+            <span class="live-indicator"><i aria-hidden="true"></i> Piano personale</span>
+          </div>
+
+          <form id="addPlayerForm" class="notes-entry-form" novalidate>
+            <div class="form-grid form-grid-two notes-entry-form-grid">
+              <label class="field notes-player-name-field">
+                <span>Nome del giocatore</span>
+                <input id="notesPlayerName" name="name" type="text" maxlength="120" autocomplete="off"
+                  placeholder="Es. Lautaro Martínez" required>
+              </label>
+              <label class="field">
+                <span>Ruolo</span>
+                <select id="notesRole" name="role" required>
+                  <option value="goalkeepers">Portieri</option>
+                  <option value="defenders">Difensori</option>
+                  <option value="midfielders">Centrocampisti</option>
+                  <option value="forwards">Attaccanti</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Fascia</span>
+                <select id="notesTier" name="tier" required></select>
+              </label>
+              <label class="field">
+                <span>Crediti ideali</span>
+                <div class="input-with-suffix">
+                  <input id="notesIdealPercentage" name="idealPercentage" type="number" min="0" max="100" step="0.1"
+                    inputmode="decimal" placeholder="Es. 12" required>
+                  <span>%</span>
+                </div>
+              </label>
+            </div>
+            <label class="field notes-textarea-field">
+              <span>Note aggiuntive</span>
+              <textarea id="notesText" name="notes" rows="4" maxlength="1600"
+                placeholder="Punti di forza, dubbi, alternative e soglia massima…"></textarea>
+              <small>Facoltativo. Le righe verranno conservate nell'esportazione Markdown.</small>
+            </label>
+            <button class="button button-primary button-sell notes-save-button" type="submit">
+              Salva la scheda <span aria-hidden="true">→</span>
+            </button>
+          </form>
+        </section>
+      </section>
+
+      <section class="notes-catalogue" aria-labelledby="notesCatalogueTitle">
+        <div class="notes-catalogue-heading">
+          <div>
+            <p class="section-kicker">La tua shortlist</p>
+            <h2 id="notesCatalogueTitle">Giocatori annotati</h2>
+          </div>
+          <span id="notesCatalogueCount" class="counter-pill">0 schede</span>
+        </div>
+        <div id="notesRoleGroups" class="notes-role-groups"></div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="editPlayerDialog" class="auction-dialog notes-dialog" aria-labelledby="editPlayerTitle">
+    <form id="editPlayerForm" class="dialog-card notes-dialog-card" method="dialog" novalidate>
+      <div class="dialog-heading">
+        <div>
+          <p class="section-kicker">Aggiorna la scheda</p>
+          <h2 id="editPlayerTitle">Modifica giocatore</h2>
+        </div>
+        <button class="icon-button" type="button" data-action="close-edit" aria-label="Chiudi">×</button>
+      </div>
+      <div class="form-grid form-grid-two notes-edit-form-grid">
+        <label class="field notes-player-name-field">
+          <span>Nome del giocatore</span>
+          <input id="editNotesPlayerName" type="text" maxlength="120" required>
+        </label>
+        <label class="field">
+          <span>Ruolo</span>
+          <select id="editNotesRole" required>
+            <option value="goalkeepers">Portieri</option>
+            <option value="defenders">Difensori</option>
+            <option value="midfielders">Centrocampisti</option>
+            <option value="forwards">Attaccanti</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Fascia</span>
+          <select id="editNotesTier" required></select>
+        </label>
+        <label class="field">
+          <span>Crediti ideali</span>
+          <div class="input-with-suffix">
+            <input id="editNotesIdealPercentage" type="number" min="0" max="100" step="0.1" inputmode="decimal"
+              required>
+            <span>%</span>
+          </div>
+        </label>
+      </div>
+      <label class="field notes-textarea-field">
+        <span>Note aggiuntive</span>
+        <textarea id="editNotesText" rows="5" maxlength="1600"></textarea>
+      </label>
+      <div class="dialog-actions">
+        <button class="button button-secondary" type="button" data-action="close-edit">Annulla</button>
+        <button class="button button-primary" type="submit">Salva modifiche</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="deletePlayerDialog" class="auction-dialog auction-dialog-small notes-dialog" aria-labelledby="deletePlayerTitle">
+    <form id="deletePlayerForm" class="dialog-card notes-dialog-card" method="dialog">
+      <span class="dialog-warning-icon" aria-hidden="true">⚠️</span>
+      <p class="section-kicker">Attenzione</p>
+      <h2 id="deletePlayerTitle">Eliminare questa scheda?</h2>
+      <p id="deletePlayerMessage">La nota del giocatore verrà rimossa dal taccuino.</p>
+      <div class="dialog-actions">
+        <button class="button button-secondary" value="cancel">Annulla</button>
+        <button id="confirmDeletePlayerButton" class="button button-danger" type="submit">Elimina scheda</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="notesToastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+</body>
+
+</html>
