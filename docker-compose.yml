@@ -1,5 +1,6 @@
 services:
     fantasy-football-tools:
+        container_name: fantasy-football-tools
         restart: always
         build: .
         ports:
