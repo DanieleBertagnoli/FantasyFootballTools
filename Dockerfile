@@ -4,16 +4,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FLASK_APP=main:app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-
-RUN pip install --no-cache-dir "flask>=3.1.3"
-
-COPY src ./src
-
-WORKDIR /app/src
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 5010
 
-CMD ["flask", "run", "--host=0.0.0.0", "--port=5010"]
+ENTRYPOINT ["/entrypoint.sh"]
