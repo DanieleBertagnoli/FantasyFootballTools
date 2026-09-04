@@ -15,7 +15,7 @@ else
     git reset --hard "origin/$BRANCH"
 fi
 
-pip install --no-cache-dir "beautifulsoup4>=4.13.0" "flask>=3.1.3" "requests>=2.32.0"
+pip install --no-cache-dir "beautifulsoup4>=4.13.0" "flask>=3.1.3" requests
 
 cd "$REPO_DIR/src"
 exec flask run --host=0.0.0.0 --port=5010
