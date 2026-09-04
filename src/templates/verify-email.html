@@ -1,0 +1,24 @@
+{% extends "auth_base.html" %}
+
+{% block title %}Email confermata{% endblock %}
+{% block body_class %}auth-page-verify-email{% endblock %}
+
+{% block header_actions %}
+<a class="header-link" href="{{ url_for('auth.login') }}">Accedi</a>
+{% endblock %}
+
+{% block auth_content %}
+{% if verification_success|default(true) %}
+<div class="auth-message-icon auth-message-icon-success" aria-hidden="true">✓</div>
+<p class="section-kicker">Account confermato</p>
+<h2 id="auth-title">La tua email è confermata.</h2>
+<p class="auth-card-copy">Perfetto: il tuo account FantAsta è attivo. Ora puoi accedere e iniziare a preparare la tua lega.</p>
+<a class="button button-primary auth-submit" href="{{ url_for('auth.login') }}">Accedi a FantAsta <span aria-hidden="true">→</span></a>
+{% else %}
+<div class="auth-message-icon auth-message-icon-error" aria-hidden="true">!</div>
+<p class="section-kicker">Link non valido</p>
+<h2 id="auth-title">Non riusciamo a confermare l'email.</h2>
+<p class="auth-card-copy">Il link potrebbe essere scaduto o già utilizzato. Richiedi una nuova registrazione oppure contatta chi gestisce la lega.</p>
+<a class="button button-secondary auth-submit" href="{{ url_for('auth.signup') }}">Torna alla registrazione</a>
+{% endif %}
+{% endblock %}

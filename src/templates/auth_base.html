@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="it">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Accedi a FantAsta per organizzare l'asta della tua lega di fantacalcio.">
+  <title>{% block title %}Account{% endblock %} | FantAsta</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+
+<body class="auth-page {% block body_class %}{% endblock %}">
+  <div class="auth-background" aria-hidden="true"></div>
+
+  <div class="auth-shell">
+    <header class="site-header auth-site-header">
+      <a class="brand" href="{{ url_for('home') }}" aria-label="Torna alla dashboard FantAsta">
+        <span class="brand-mark" aria-hidden="true">⚽</span>
+        <span>Fant<span>Asta</span></span>
+      </a>
+
+      <nav class="auth-header-actions" aria-label="Accesso account">
+        {% block header_actions %}
+        <a class="header-link" href="{{ url_for('auth.login') }}">Accedi</a>
+        <a class="button button-secondary auth-header-button" href="{{ url_for('auth.signup') }}">Registrati</a>
+        {% endblock %}
+      </nav>
+    </header>
+
+    <main class="auth-main">
+      <section class="auth-intro" aria-labelledby="auth-intro-title">
+        <p class="eyebrow">La tua lega, sempre pronta</p>
+        <h1 id="auth-intro-title">L'asta merita una regia impeccabile.</h1>
+        <p class="auth-intro-copy">
+          Conserva le tue decisioni e ritrova tutti gli strumenti FantAsta in un unico posto.
+        </p>
+
+        <ul class="auth-feature-list" aria-label="Vantaggi di FantAsta">
+          <li><span aria-hidden="true">✓</span> Un accesso personale e protetto</li>
+          <li><span aria-hidden="true">✓</span> Pronto per le prossime funzioni della lega</li>
+          <li><span aria-hidden="true">✓</span> Tutto ciò che serve, senza distrazioni</li>
+        </ul>
+      </section>
+
+      <section class="auth-card" aria-labelledby="auth-title">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="auth-flash-stack" aria-live="polite">
+          {% for category, message in messages %}
+          {% set flash_type = 'error' if category in ('error', 'danger') else ('success' if category == 'success' else 'info') %}
+          <div class="auth-flash auth-flash-{{ flash_type }}"
+            role="{% if flash_type == 'error' %}alert{% else %}status{% endif %}">
+            <span class="auth-flash-icon" aria-hidden="true">
+              {% if flash_type == 'success' %}✓{% elif flash_type == 'error' %}!{% else %}i{% endif %}
+            </span>
+            <p>{{ message }}</p>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {% block auth_content %}{% endblock %}
+      </section>
+    </main>
+
+    <footer class="auth-footer">
+      <span>FantAsta</span>
+      <span aria-hidden="true">•</span>
+      <span>Organizza. Rilancia. Vinci.</span>
+    </footer>
+  </div>
+
+  <script defer src="{{ url_for('static', filename='js/password-strength.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+
+</html>

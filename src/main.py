@@ -8,6 +8,7 @@ from typing import Any
 import click
 from flask import Flask, render_template
 
+from auth import init_auth
 from bid_manager import bid_bp
 from notes_manager import notes_bp
 from player_catalogue import PlayerCatalogueError, sync_players_catalogue
@@ -24,18 +25,15 @@ def _environment_flag(name: str, default: bool = False) -> bool:
 def create_app(test_config: Mapping[str, Any] | None = None) -> Flask:
     """Create and configure the FantAsta web application."""
 
-    # `python src/main.py` gives Flask the module name `__main__`. Without
-    # an explicit path Flask would then look for `instance/` relative to the
-    # current shell directory, while the scraper always writes beside this
-    # source file. Keep both entry points on the same local JSON catalogue.
-    instance_path = Path(__file__).resolve().parent / "instance"
+    # Keep all mutable application files outside the source tree. Docker
+    # mounts this directory as a volume, while local runs use the same path.
+    instance_path = Path(__file__).resolve().parent.parent / "persistent_data"
     app = Flask(__name__, instance_path=str(instance_path))
     app.config.from_mapping(
         SECRET_KEY=os.environ.get(
             "FLASK_SECRET_KEY",
             "local-development-key-change-before-deployment",
         ),
-        PLAYER_CATALOGUE_PATH=os.environ.get("PLAYER_CATALOGUE_PATH") or None,
         PLAYER_CATALOGUE_SYNC_ON_STARTUP=_environment_flag("PLAYER_CATALOGUE_SYNC_ON_STARTUP"),
         PLAYER_CATALOGUE_SYNC_INTERVAL_HOURS=os.environ.get("PLAYER_CATALOGUE_SYNC_INTERVAL_HOURS", "24"),
         PLAYER_CATALOGUE_TIMEOUT_SECONDS=os.environ.get("PLAYER_CATALOGUE_TIMEOUT_SECONDS", "20"),
@@ -43,6 +41,7 @@ def create_app(test_config: Mapping[str, Any] | None = None) -> Flask:
     )
     if test_config:
         app.config.update(test_config)
+    init_auth(app)
     app.register_blueprint(bid_bp)
     app.register_blueprint(notes_bp)
     app.register_blueprint(player_search_bp)

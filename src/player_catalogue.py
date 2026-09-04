@@ -40,10 +40,15 @@ WIKIPEDIA_USER_AGENT = (
     "(https://github.com/DanieleBertagnoli/FantasyFootballTools; local Serie A player catalogue)"
 )
 
-PLAYER_CATALOGUE_PATH_CONFIG = "PLAYER_CATALOGUE_PATH"
 PLAYER_CATALOGUE_INTERVAL_CONFIG = "PLAYER_CATALOGUE_SYNC_INTERVAL_HOURS"
 PLAYER_CATALOGUE_TIMEOUT_CONFIG = "PLAYER_CATALOGUE_TIMEOUT_SECONDS"
 PLAYER_CATALOGUE_SEASON_START_MONTH_CONFIG = "PLAYER_CATALOGUE_SEASON_START_MONTH"
+
+# The catalogue is application data, not deployment configuration. Keeping it
+# at the repository-level persistent directory makes local development and the
+# `/app/persistent_data` Docker bind mount use exactly the same file.
+PERSISTENT_DATA_DIRECTORY = Path(__file__).resolve().parent.parent / "persistent_data"
+PLAYER_CATALOGUE_FILENAME = "player_catalogue.json"
 
 CATALOGUE_SCHEMA_VERSION = 2
 DEFAULT_SYNC_INTERVAL_HOURS = 24
@@ -61,6 +66,12 @@ ProgressReporter = Callable[[str], None]
 
 class PlayerCatalogueError(RuntimeError):
     """Raised when the local catalogue or its Wikipedia source is unavailable."""
+
+
+def player_catalogue_path() -> Path:
+    """Return the one fixed, persistent location for the player catalogue."""
+
+    return PERSISTENT_DATA_DIRECTORY / PLAYER_CATALOGUE_FILENAME
 
 
 @dataclass(frozen=True)
@@ -370,9 +381,7 @@ class PlayerCatalogueStore:
 
 
 def _store_for_current_app() -> PlayerCatalogueStore:
-    configured_path = current_app.config.get(PLAYER_CATALOGUE_PATH_CONFIG)
-    path = Path(configured_path) if configured_path else Path(current_app.instance_path) / "player_catalogue.json"
-    return PlayerCatalogueStore(path)
+    return PlayerCatalogueStore(player_catalogue_path())
 
 
 def _positive_int_config(key: str, default: int, maximum: int) -> int:

@@ -1,0 +1,9 @@
+.git/
+.venv/
+__pycache__/
+*.py[cod]
+.env
+persistent_data/
+instance/
+src/instance/
+.pytest_cache/

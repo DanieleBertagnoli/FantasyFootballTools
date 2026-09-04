@@ -16,7 +16,22 @@
         <span class="brand-mark" aria-hidden="true">⚽</span>
         <span>Fant<span>Asta</span></span>
       </a>
-      <span class="header-status"><span aria-hidden="true">●</span> Strumenti della lega</span>
+      {% if current_user %}
+      <div class="header-account-controls">
+        <span class="header-status header-account-email" title="{{ current_user.email }}">
+          <span aria-hidden="true">●</span> {{ current_user.email }}
+        </span>
+        <form class="header-logout-form" method="post" action="{{ url_for('auth.logout') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="header-link account-logout" type="submit"><span aria-hidden="true">↪</span> Esci</button>
+        </form>
+      </div>
+      {% else %}
+      <div class="header-account-controls">
+        <a class="header-link" href="{{ url_for('auth.login') }}">Accedi</a>
+        <a class="button button-secondary account-signup" href="{{ url_for('auth.signup') }}">Registrati</a>
+      </div>
+      {% endif %}
     </header>
 
     <main class="landing-main">

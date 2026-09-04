@@ -1,0 +1,59 @@
+{% extends "auth_base.html" %}
+
+{% block title %}Accedi{% endblock %}
+{% block body_class %}auth-page-login{% endblock %}
+
+{% block header_actions %}
+<span class="auth-header-question">Non hai un account?</span>
+<a class="button button-secondary auth-header-button" href="{{ url_for('auth.signup') }}">Registrati</a>
+{% endblock %}
+
+{% block auth_content %}
+<div class="auth-card-heading">
+  <span class="auth-card-icon" aria-hidden="true">⚽</span>
+  <div>
+    <p class="section-kicker">Bentornato</p>
+    <h2 id="auth-title">Accedi a FantAsta</h2>
+  </div>
+</div>
+<p class="auth-card-copy">Inserisci i tuoi dati per tornare alla cabina di regia della tua lega.</p>
+
+<form class="auth-form" method="post" action="{{ url_for('auth.login') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% set login_next = next_url|default(request.args.get('next', ''), true) %}
+  {% if login_next %}<input type="hidden" name="next" value="{{ login_next }}">{% endif %}
+  <label class="auth-field" for="loginEmail">
+    <span>Indirizzo email</span>
+    <input id="loginEmail" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none"
+      spellcheck="false" maxlength="254" placeholder="nome@esempio.it" value="{{ request.form.get('email', '') }}" required>
+  </label>
+
+  <div class="auth-field auth-password-field">
+    <div class="auth-field-label-row">
+      <label for="loginPassword">Password</label>
+      <a class="auth-text-link auth-text-link-small" href="{{ url_for('auth.forgot_password') }}">Password dimenticata?</a>
+    </div>
+    <div class="auth-password-control">
+      <input id="loginPassword" name="password" type="password" autocomplete="current-password" maxlength="128" required>
+      <button class="auth-password-toggle" type="button" data-password-toggle aria-controls="loginPassword"
+        aria-label="Mostra password">
+        <span aria-hidden="true">◉</span>
+      </button>
+    </div>
+  </div>
+
+  <button class="button button-primary auth-submit" type="submit">
+    Accedi <span aria-hidden="true">→</span>
+  </button>
+</form>
+
+{% if show_resend_confirmation %}
+<form class="auth-resend-form" method="post" action="{{ url_for('auth.resend_confirmation') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="email" value="{{ email|default(request.form.get('email', ''), true) }}">
+  <button class="button button-secondary" type="submit">Reinvia l'email di conferma</button>
+</form>
+{% endif %}
+
+<p class="auth-switch-copy">Non hai ancora un account? <a class="auth-text-link" href="{{ url_for('auth.signup') }}">Registrati ora</a></p>
+{% endblock %}

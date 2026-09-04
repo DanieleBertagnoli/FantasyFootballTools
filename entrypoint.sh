@@ -1,21 +1,10 @@
 #!/bin/sh
-set -e
+set -eu
 
-REPO_URL="https://github.com/DanieleBertagnoli/FantasyFootballTools.git"
-BRANCH="master"
-REPO_DIR="/app/repo"
-
-if [ ! -d "$REPO_DIR/.git" ]; then
-    echo "Cloning the repo..."
-    git clone --branch "$BRANCH" "$REPO_URL" "$REPO_DIR"
-else
-    echo "Updating the repo..."
-    cd "$REPO_DIR"
-    git fetch origin
-    git reset --hard "origin/$BRANCH"
-fi
-
-pip install --no-cache-dir "beautifulsoup4>=4.13.0" "flask>=3.1.3" requests
-
-cd "$REPO_DIR/src"
-exec flask run --host=0.0.0.0 --port=5010
+# Docker Compose waits for the MariaDB health check before starting this
+# process. Keeping startup local to the built image avoids cloning arbitrary
+# source revisions or installing dependencies each time the container starts.
+# APP_PORT is intentionally only the host-side Compose mapping.  Keeping the
+# process on the fixed container port avoids a mismatch when a user chooses a
+# different public port in `.env`.
+exec flask --app main:app run --host=0.0.0.0 --port 5010

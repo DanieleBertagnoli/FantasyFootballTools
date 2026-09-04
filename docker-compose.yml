@@ -1,0 +1,39 @@
+name: fantasy-football-tools
+
+network:
+  default:
+    name: fantasy-football-tools
+
+services:
+  app:
+    build:
+      context: .
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-5010}:5010"
+    volumes:
+      - ./persistent_data:/app/persistent_data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: mariadb:11.4
+    env_file:
+      - .env
+    environment:
+      MARIADB_DATABASE: "${DB_NAME:?Set DB_NAME in .env}"
+      MARIADB_USER: "${DB_USER:?Set DB_USER in .env}"
+      MARIADB_PASSWORD: "${DB_PASSWORD:?Set DB_PASSWORD in .env}"
+      MARIADB_ROOT_PASSWORD: "${MARIADB_ROOT_PASSWORD:?Set MARIADB_ROOT_PASSWORD in .env}"
+    volumes:
+      - ./persistent_data/mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping --host=127.0.0.1 --user=root --password=\"$${MARIADB_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped

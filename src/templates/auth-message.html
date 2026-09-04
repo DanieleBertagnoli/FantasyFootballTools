@@ -1,0 +1,21 @@
+{% extends "auth_base.html" %}
+
+{% block title %}{{ title|default('Messaggio account') }}{% endblock %}
+{% block body_class %}auth-page-message{% endblock %}
+
+{% block header_actions %}
+<a class="header-link" href="{{ url_for('auth.login') }}">Accedi</a>
+{% endblock %}
+
+{% block auth_content %}
+{% set message_kind = kind|default('info') %}
+<div class="auth-message-icon {% if message_kind == 'success' %}auth-message-icon-success{% elif message_kind in ('error', 'danger') %}auth-message-icon-error{% else %}auth-message-icon-info{% endif %}"
+  aria-hidden="true">
+  {% if message_kind == 'success' %}✓{% elif message_kind in ('error', 'danger') %}!{% else %}i{% endif %}
+</div>
+{% if eyebrow %}<p class="section-kicker">{{ eyebrow }}</p>{% endif %}
+<h2 id="auth-title">{{ title|default('Aggiornamento account') }}</h2>
+<p class="auth-card-copy">{{ message|default('Controlla le istruzioni ricevute e riprova.') }}</p>
+<a class="button {% if message_kind in ('error', 'danger') %}button-secondary{% else %}button-primary{% endif %} auth-submit"
+  href="{{ action_url|default(url_for('auth.login'), true) }}">{{ action_label|default('Vai all\'accesso') }} <span aria-hidden="true">→</span></a>
+{% endblock %}
