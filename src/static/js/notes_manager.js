@@ -10,7 +10,10 @@ const API = {
   export: "/api/notes/export",
   markdown: "/api/notes/markdown",
   players: "/api/notes/players",
+  closeSession: "/api/notes/session/close",
 };
+
+const INTERNAL_NAVIGATION_KEY = "fantasta:notes-manager-internal-navigation";
 
 const ROLES = [
   { key: "goalkeepers", label: "Portieri", short: "P", icon: "🧤" },
@@ -76,8 +79,48 @@ function init() {
   });
 
   bindEvents();
+  bindSessionCleanup();
+  setupPlayerAutocompletes();
   updateTierNameFields();
   loadNotes();
+}
+
+function bindSessionCleanup() {
+  // Same-site navigation keeps the active note. Closing the tab/window sends
+  // a best-effort request to discard only this session's server-side file.
+  clearInternalNavigationFlag();
+  document.addEventListener("click", markInternalNavigation);
+  window.addEventListener("pageshow", clearInternalNavigationFlag);
+  window.addEventListener("pagehide", (event) => {
+    if (event.persisted || !state.note || hasInternalNavigationFlag()) return;
+    sendSessionCloseBeacon();
+  });
+}
+
+function markInternalNavigation(event) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const link = event.target.closest("a[href]");
+  if (!link || link.target && link.target !== "_self") return;
+  const destination = new URL(link.href, window.location.href);
+  if (destination.origin === window.location.origin) {
+    sessionStorage.setItem(INTERNAL_NAVIGATION_KEY, "1");
+  }
+}
+
+function hasInternalNavigationFlag() {
+  return sessionStorage.getItem(INTERNAL_NAVIGATION_KEY) === "1";
+}
+
+function clearInternalNavigationFlag() {
+  sessionStorage.removeItem(INTERNAL_NAVIGATION_KEY);
+}
+
+function sendSessionCloseBeacon() {
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon(API.closeSession);
+    return;
+  }
+  fetch(API.closeSession, { method: "POST", keepalive: true }).catch(() => {});
 }
 
 function bindEvents() {
@@ -110,6 +153,24 @@ function bindEvents() {
       importNotes(file);
     }
   });
+}
+
+function setupPlayerAutocompletes() {
+  if (!window.PlayerAutocomplete) return;
+
+  const fields = [
+    {
+      input: dom.playerName,
+      results: document.getElementById("notesPlayerSuggestions"),
+      status: document.getElementById("notesPlayerSearchStatus"),
+    },
+    {
+      input: dom.editPlayerName,
+      results: document.getElementById("editNotesPlayerSuggestions"),
+      status: document.getElementById("editNotesPlayerSearchStatus"),
+    },
+  ];
+  fields.forEach((field) => new window.PlayerAutocomplete(field));
 }
 
 async function loadNotes() {
@@ -334,6 +395,7 @@ async function addPlayer(event) {
     state.note = extractNote(response) || await fetchNotesSnapshot();
     render();
     dom.playerName.value = "";
+    dom.playerName.dispatchEvent(new Event("input", { bubbles: true }));
     dom.playerIdealPercentage.value = "";
     dom.playerNotes.value = "";
     dom.playerName.focus();

@@ -1,9 +1,11 @@
 [project]
-name = "fantasyfootballbidmanager"
+name = "FantasyFootballTools"
 version = "0.1.0"
 description = "Local Flask tools for managing a fantasy-football auction and notes"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "beautifulsoup4>=4.13.0",
     "flask>=3.1.3",
+    "requests>=2.32.0",
 ]

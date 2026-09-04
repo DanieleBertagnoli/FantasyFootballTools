@@ -12,6 +12,7 @@
     href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script defer src="{{ url_for('static', filename='js/player_autocomplete.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/notes_manager.js') }}"></script>
 </head>
 
@@ -172,11 +173,18 @@
 
           <form id="addPlayerForm" class="notes-entry-form" novalidate>
             <div class="form-grid form-grid-two notes-entry-form-grid">
-              <label class="field notes-player-name-field">
-                <span>Nome del giocatore</span>
-                <input id="notesPlayerName" name="name" type="text" maxlength="120" autocomplete="off"
-                  placeholder="Es. Lautaro Martínez" required>
-              </label>
+              <div class="field notes-player-name-field player-search-field">
+                <label for="notesPlayerName">Nome del giocatore</label>
+                <div id="notesPlayerAutocomplete" class="player-autocomplete">
+                  <input id="notesPlayerName" name="name" type="text" maxlength="120" autocomplete="off"
+                    placeholder="Es. Lautaro Martínez" role="combobox" aria-autocomplete="list" aria-expanded="false"
+                    aria-controls="notesPlayerSuggestions" aria-describedby="notesPlayerSearchStatus" required>
+                  <div id="notesPlayerSuggestions" class="player-suggestions" role="listbox" hidden></div>
+                </div>
+                <small id="notesPlayerSearchStatus" class="player-search-status" aria-live="polite">
+                  Scrivi almeno 3 caratteri per cercare nel catalogo.
+                </small>
+              </div>
               <label class="field">
                 <span>Ruolo</span>
                 <select id="notesRole" name="role" required>
@@ -235,10 +243,18 @@
         <button class="icon-button" type="button" data-action="close-edit" aria-label="Chiudi">×</button>
       </div>
       <div class="form-grid form-grid-two notes-edit-form-grid">
-        <label class="field notes-player-name-field">
-          <span>Nome del giocatore</span>
-          <input id="editNotesPlayerName" type="text" maxlength="120" required>
-        </label>
+        <div class="field notes-player-name-field player-search-field">
+          <label for="editNotesPlayerName">Nome del giocatore</label>
+          <div id="editNotesPlayerAutocomplete" class="player-autocomplete">
+            <input id="editNotesPlayerName" type="text" maxlength="120" autocomplete="off"
+              role="combobox" aria-autocomplete="list" aria-expanded="false"
+              aria-controls="editNotesPlayerSuggestions" aria-describedby="editNotesPlayerSearchStatus" required>
+            <div id="editNotesPlayerSuggestions" class="player-suggestions" role="listbox" hidden></div>
+          </div>
+          <small id="editNotesPlayerSearchStatus" class="player-search-status" aria-live="polite">
+            Scrivi almeno 3 caratteri per cercare nel catalogo.
+          </small>
+        </div>
         <label class="field">
           <span>Ruolo</span>
           <select id="editNotesRole" required>

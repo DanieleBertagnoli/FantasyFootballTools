@@ -542,6 +542,17 @@ class JsonNotesStore:
                     pass
         return canonical
 
+    def delete(self) -> bool:
+        """Remove this session's note file without touching other notes."""
+
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            return False
+        except OSError as error:
+            raise NotesStorageError("The saved note could not be deleted.") from error
+        return True
+
 
 class NotesRepository:
     """Keep each note in a separate file selected by a safe note ID."""
@@ -558,6 +569,9 @@ class NotesRepository:
     def save(self, note: Any) -> dict[str, Any]:
         canonical = validate_note(note)
         return self._store_for(canonical["id"]).save(canonical)
+
+    def delete(self, note_id: Any) -> bool:
+        return self._store_for(note_id).delete()
 
 
 def _repository_for_current_app() -> NotesRepository:
@@ -600,6 +614,17 @@ def save_active_note(
     session_data[SESSION_NOTE_ID_KEY] = saved["id"]
     _mark_session_modified(session_data)
     return saved
+
+
+def discard_active_note(
+    session_data: MutableMapping[str, Any],
+    repository: NotesRepository,
+) -> bool:
+    """Delete only the note selected by this browser session."""
+
+    note_id = session_data.pop(SESSION_NOTE_ID_KEY, None)
+    _mark_session_modified(session_data)
+    return repository.delete(note_id) if note_id else False
 
 
 def _request_object() -> Mapping[str, Any]:
@@ -654,6 +679,15 @@ def get_note():
     except NoteNotFoundError:
         return jsonify({"note": None})
     return jsonify({"note": note_state(note)})
+
+
+@notes_bp.post("/api/notes/session/close")
+def close_notes_session_endpoint():
+    """Discard the active notes when its browser session is ending."""
+
+    with _STORE_LOCK:
+        discard_active_note(session, _repository_for_current_app())
+    return ("", 204)
 
 
 @notes_bp.post("/api/notes")

@@ -9,7 +9,10 @@ const API = {
   import: "/api/auction/import",
   export: "/api/auction/export",
   players: "/api/auction/players",
+  closeSession: "/api/auction/session/close",
 };
+
+const INTERNAL_NAVIGATION_KEY = "fantasta:bid-manager-internal-navigation";
 
 const ROLES = [
   {
@@ -102,8 +105,48 @@ function init() {
   });
 
   bindEvents();
+  bindSessionCleanup();
+  setupPlayerAutocomplete();
   updateParticipantNameFields();
   loadAuction();
+}
+
+function bindSessionCleanup() {
+  // A regular same-site link must preserve the session. Closing the tab/window
+  // sends a best-effort beacon that deletes only this session's auction file.
+  clearInternalNavigationFlag();
+  document.addEventListener("click", markInternalNavigation);
+  window.addEventListener("pageshow", clearInternalNavigationFlag);
+  window.addEventListener("pagehide", (event) => {
+    if (event.persisted || !state.auction || hasInternalNavigationFlag()) return;
+    sendSessionCloseBeacon();
+  });
+}
+
+function markInternalNavigation(event) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const link = event.target.closest("a[href]");
+  if (!link || link.target && link.target !== "_self") return;
+  const destination = new URL(link.href, window.location.href);
+  if (destination.origin === window.location.origin) {
+    sessionStorage.setItem(INTERNAL_NAVIGATION_KEY, "1");
+  }
+}
+
+function hasInternalNavigationFlag() {
+  return sessionStorage.getItem(INTERNAL_NAVIGATION_KEY) === "1";
+}
+
+function clearInternalNavigationFlag() {
+  sessionStorage.removeItem(INTERNAL_NAVIGATION_KEY);
+}
+
+function sendSessionCloseBeacon() {
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon(API.closeSession);
+    return;
+  }
+  fetch(API.closeSession, { method: "POST", keepalive: true }).catch(() => {});
 }
 
 function bindEvents() {
@@ -137,6 +180,16 @@ function bindEvents() {
     if (file) {
       importAuction(file);
     }
+  });
+}
+
+function setupPlayerAutocomplete() {
+  if (!window.PlayerAutocomplete) return;
+  new window.PlayerAutocomplete({
+    input: dom.playerName,
+    results: document.getElementById("bidPlayerSuggestions"),
+    status: document.getElementById("bidPlayerSearchStatus"),
+    onSelect: () => dom.salePrice.focus(),
   });
 }
 
@@ -521,6 +574,7 @@ async function addSale(event) {
     render();
     dom.playerName.value = "";
     dom.salePrice.value = "";
+    dom.playerName.dispatchEvent(new Event("input", { bubbles: true }));
     dom.buyerSelect.value = "";
     updateSaleHint();
     dom.playerName.focus();

@@ -751,6 +751,17 @@ class JsonAuctionStore:
             raise AuctionStorageError("The auction could not be saved locally.") from error
         return canonical_auction
 
+    def delete(self) -> bool:
+        """Remove this session's auction file without touching other auctions."""
+
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            return False
+        except OSError as error:
+            raise AuctionStorageError("The saved auction could not be deleted.") from error
+        return True
+
 
 class AuctionRepository:
     """A directory-backed store whose files are isolated by auction ID."""
@@ -771,6 +782,9 @@ class AuctionRepository:
     def save(self, auction: Any) -> dict[str, Any]:
         canonical_auction = validate_auction(auction)
         return self._store_for(canonical_auction["id"]).save(canonical_auction)
+
+    def delete(self, auction_id: Any) -> bool:
+        return self._store_for(auction_id).delete()
 
 
 def _repository_for_current_app() -> AuctionRepository:
@@ -818,6 +832,17 @@ def save_active_auction(
     session_data[SESSION_AUCTION_ID_KEY] = saved_auction["id"]
     _mark_session_modified(session_data)
     return saved_auction
+
+
+def discard_active_auction(
+    session_data: MutableMapping[str, Any],
+    repository: AuctionRepository,
+) -> bool:
+    """Delete only the auction selected by this browser session."""
+
+    auction_id = session_data.pop(SESSION_AUCTION_ID_KEY, None)
+    _mark_session_modified(session_data)
+    return repository.delete(auction_id) if auction_id else False
 
 
 def _request_object() -> Mapping[str, Any]:
@@ -869,6 +894,15 @@ def get_auction():
     except AuctionNotFoundError:
         return jsonify({"auction": None})
     return jsonify({"auction": auction_state(auction)})
+
+
+@bid_bp.post("/api/auction/session/close")
+def close_auction_session_endpoint():
+    """Discard the active auction when its browser session is ending."""
+
+    with _STORE_LOCK:
+        discard_active_auction(session, _repository_for_current_app())
+    return ("", 204)
 
 
 @bid_bp.post("/api/auction")

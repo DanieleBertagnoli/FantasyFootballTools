@@ -12,6 +12,7 @@
     href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script defer src="{{ url_for('static', filename='js/player_autocomplete.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/bid_manager.js') }}"></script>
 </head>
 
@@ -183,11 +184,18 @@
           </div>
 
           <form id="saleForm" class="sale-form" novalidate>
-            <label class="field field-player">
-              <span>Nome del giocatore</span>
-              <input id="playerName" name="playerName" type="text" maxlength="80" autocomplete="off"
-                placeholder="Es. Lautaro Martínez" required>
-            </label>
+            <div class="field field-player player-search-field">
+              <label for="playerName">Nome del giocatore</label>
+              <div id="bidPlayerAutocomplete" class="player-autocomplete">
+                <input id="playerName" name="playerName" type="text" maxlength="80" autocomplete="off"
+                  placeholder="Es. Lautaro Martínez" role="combobox" aria-autocomplete="list" aria-expanded="false"
+                  aria-controls="bidPlayerSuggestions" aria-describedby="bidPlayerSearchStatus" required>
+                <div id="bidPlayerSuggestions" class="player-suggestions" role="listbox" hidden></div>
+              </div>
+              <small id="bidPlayerSearchStatus" class="player-search-status" aria-live="polite">
+                Scrivi almeno 3 caratteri per cercare nel catalogo.
+              </small>
+            </div>
             <label class="field field-price">
               <span>Prezzo finale</span>
               <div class="input-with-suffix">
