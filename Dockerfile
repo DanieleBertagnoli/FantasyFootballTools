@@ -15,10 +15,8 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
-COPY entrypoint.sh ./entrypoint.sh
-RUN chmod +x /app/entrypoint.sh \
-    && mkdir -p /app/persistent_data
+RUN mkdir -p /app/persistent_data
 
 EXPOSE 5010
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["flask", "--app", "main:app", "run", "--host=0.0.0.0", "--port=5010"]

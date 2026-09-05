@@ -14,7 +14,7 @@ services:
       - .env
     
     ports:
-      - "${APP_PORT:-5010}:5010"
+      - "5010:5010"
     
     volumes:
       - ./persistent_data:/app/persistent_data
