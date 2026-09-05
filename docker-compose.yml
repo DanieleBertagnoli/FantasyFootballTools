@@ -1,6 +1,6 @@
 networks:
-  db_network:
-    name: db_network
+  fantasy_football_tools_network:
+    name: fantasy_football_tools_network
     internal: true
 
 services:
@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
     
     networks:
-      - db_network
+      - fantasy_football_tools_network
 
   fantasy-football-tools-db:
     container_name: fantasy-football-tools-db
