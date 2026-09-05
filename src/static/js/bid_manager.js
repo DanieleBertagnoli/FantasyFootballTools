@@ -9,10 +9,7 @@ const API = {
   import: "/api/auction/import",
   export: "/api/auction/export",
   players: "/api/auction/players",
-  closeSession: "/api/auction/session/close",
 };
-
-const INTERNAL_NAVIGATION_KEY = "fantasta:bid-manager-internal-navigation";
 
 const ROLES = [
   {
@@ -49,10 +46,10 @@ const ROLE_BY_KEY = Object.fromEntries(ROLES.map((role) => [role.key, role]));
 
 const state = {
   auction: null,
-  selectedParticipantId: null,
   editingSale: null,
   deletingSale: null,
   showSetup: false,
+  readOnly: false,
 };
 
 const dom = {};
@@ -61,6 +58,8 @@ document.addEventListener("DOMContentLoaded", init);
 
 function init() {
   Object.assign(dom, {
+    app: document.getElementById("auctionApp"),
+    utilityActions: document.getElementById("auctionUtilityActions"),
     loading: document.getElementById("auctionLoading"),
     setupView: document.getElementById("setupView"),
     auctionView: document.getElementById("auctionView"),
@@ -84,10 +83,6 @@ function init() {
     salePrice: document.getElementById("salePrice"),
     buyerSelect: document.getElementById("buyerSelect"),
     saleHint: document.getElementById("saleHint"),
-    rosterPanel: document.getElementById("rosterPanel"),
-    rosterTitle: document.getElementById("rosterTitle"),
-    rosterSummary: document.getElementById("rosterSummary"),
-    rosterGroups: document.getElementById("rosterGroups"),
     historyList: document.getElementById("historyList"),
     historyCount: document.getElementById("historyCount"),
     editDialog: document.getElementById("editSaleDialog"),
@@ -101,86 +96,58 @@ function init() {
     confirmDeleteButton: document.getElementById("confirmDeleteButton"),
     toastRegion: document.getElementById("toastRegion"),
     exportButton: document.querySelector('[data-action="export-auction"]'),
+    shareButton: document.querySelector('[data-action="share-auction"]'),
     returnAuctionButton: document.getElementById("returnAuctionButton"),
   });
 
+  const shareToken = dom.app.dataset.sharedAuctionToken;
+  state.readOnly = dom.app.dataset.sharedAuction === "true";
+  if (state.readOnly && shareToken) {
+    API.auction = `/api/auction/shared/${encodeURIComponent(shareToken)}`;
+  }
+
   bindEvents();
-  bindSessionCleanup();
-  setupPlayerAutocomplete();
-  updateParticipantNameFields();
+  if (!state.readOnly) {
+    setupPlayerAutocomplete();
+    updateParticipantNameFields();
+  }
   loadAuction();
-}
-
-function bindSessionCleanup() {
-  // A regular same-site link must preserve the session. Closing the tab/window
-  // sends a best-effort beacon that deletes only this session's auction file.
-  clearInternalNavigationFlag();
-  document.addEventListener("click", markInternalNavigation);
-  window.addEventListener("pageshow", clearInternalNavigationFlag);
-  window.addEventListener("pagehide", (event) => {
-    if (event.persisted || !state.auction || hasInternalNavigationFlag()) return;
-    sendSessionCloseBeacon();
-  });
-}
-
-function markInternalNavigation(event) {
-  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  const link = event.target.closest("a[href]");
-  if (!link || link.target && link.target !== "_self") return;
-  const destination = new URL(link.href, window.location.href);
-  if (destination.origin === window.location.origin) {
-    sessionStorage.setItem(INTERNAL_NAVIGATION_KEY, "1");
+  if (state.readOnly) {
+    window.setInterval(loadAuction, 5000);
   }
-}
-
-function hasInternalNavigationFlag() {
-  return sessionStorage.getItem(INTERNAL_NAVIGATION_KEY) === "1";
-}
-
-function clearInternalNavigationFlag() {
-  sessionStorage.removeItem(INTERNAL_NAVIGATION_KEY);
-}
-
-function sendSessionCloseBeacon() {
-  if (navigator.sendBeacon) {
-    navigator.sendBeacon(API.closeSession);
-    return;
-  }
-  fetch(API.closeSession, { method: "POST", keepalive: true }).catch(() => {});
 }
 
 function bindEvents() {
-  dom.participantCount.addEventListener("input", updateParticipantNameFields);
-  dom.newAuctionForm.addEventListener("submit", createAuction);
-  dom.saleForm.addEventListener("submit", addSale);
-  dom.editForm.addEventListener("submit", saveSaleEdit);
-  dom.deleteForm.addEventListener("submit", deleteSale);
-  dom.buyerSelect.addEventListener("change", updateSaleHint);
-  dom.salePrice.addEventListener("input", updateSaleHint);
-  dom.importFile.addEventListener("change", handleSelectedImport);
+  if (!state.readOnly) {
+    dom.participantCount.addEventListener("input", updateParticipantNameFields);
+    dom.newAuctionForm.addEventListener("submit", createAuction);
+    dom.saleForm.addEventListener("submit", addSale);
+    dom.editForm.addEventListener("submit", saveSaleEdit);
+    dom.deleteForm.addEventListener("submit", deleteSale);
+    dom.buyerSelect.addEventListener("change", updateSaleHint);
+    dom.salePrice.addEventListener("input", updateSaleHint);
+    dom.importFile.addEventListener("change", handleSelectedImport);
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dom.importDropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dom.importDropzone.classList.add("is-dragging");
+      });
+    });
+
+    ["dragleave", "drop"].forEach((eventName) => {
+      dom.importDropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dom.importDropzone.classList.remove("is-dragging");
+      });
+    });
+
+    dom.importDropzone.addEventListener("drop", (event) => {
+      const [file] = event.dataTransfer.files;
+      if (file) importAuction(file);
+    });
+  }
   document.addEventListener("click", handleClick);
-
-  ["dragenter", "dragover"].forEach((eventName) => {
-    dom.importDropzone.addEventListener(eventName, (event) => {
-      event.preventDefault();
-      dom.importDropzone.classList.add("is-dragging");
-    });
-  });
-
-  ["dragleave", "drop"].forEach((eventName) => {
-    dom.importDropzone.addEventListener(eventName, (event) => {
-      event.preventDefault();
-      dom.importDropzone.classList.remove("is-dragging");
-    });
-  });
-
-  dom.importDropzone.addEventListener("drop", (event) => {
-    const [file] = event.dataTransfer.files;
-
-    if (file) {
-      importAuction(file);
-    }
-  });
 }
 
 function setupPlayerAutocomplete() {
@@ -210,13 +177,18 @@ async function loadAuction() {
 
 function render() {
   const hasAuction = isAuctionReady();
-  const showSetup = state.showSetup || !hasAuction;
+  const showSetup = !state.readOnly && (state.showSetup || !hasAuction);
 
   dom.loading.hidden = true;
   dom.setupView.hidden = !showSetup;
   dom.auctionView.hidden = showSetup;
-  dom.exportButton.disabled = !hasAuction;
-  dom.returnAuctionButton.hidden = !hasAuction;
+  if (dom.utilityActions) dom.utilityActions.hidden = !hasAuction;
+  if (dom.exportButton) dom.exportButton.disabled = !hasAuction;
+  if (dom.shareButton) {
+    dom.shareButton.hidden = !hasAuction;
+    dom.shareButton.disabled = !hasAuction;
+  }
+  if (dom.returnAuctionButton) dom.returnAuctionButton.hidden = !hasAuction;
 
   if (showSetup) {
     return;
@@ -224,13 +196,11 @@ function render() {
 
   renderParticipants();
   renderStage();
-  renderRoster();
   renderHistory();
 }
 
 function renderParticipants() {
   const participants = getParticipants();
-  const selectedId = String(state.selectedParticipantId || "");
 
   dom.participantsTotal.textContent = `${participants.length} squadre`;
   dom.participantsList.innerHTML = participants
@@ -241,18 +211,11 @@ function renderParticipants() {
       const percentage = initialCredits > 0
         ? Math.max(0, Math.min(100, (remainingCredits / initialCredits) * 100))
         : 0;
-      const meterState = percentage <= 0 ? "is-empty" : percentage < 20 ? "is-low" : "";
-      const isSelected = String(participantId) === selectedId;
+      const creditHue = Math.round(4 + percentage * 1.16);
       const participantName = getParticipantName(participant);
 
       return `
-        <button
-          class="participant-card${isSelected ? " is-selected" : ""}"
-          type="button"
-          data-action="select-participant"
-          data-participant-id="${escapeHtml(participantId)}"
-          aria-pressed="${isSelected}"
-        >
+        <article class="participant-card" data-participant-id="${escapeHtml(participantId)}">
           <span class="participant-card-main">
             <span class="participant-avatar" aria-hidden="true">${escapeHtml(getInitials(participantName))}</span>
             <span class="participant-name">${escapeHtml(participantName)}</span>
@@ -262,14 +225,49 @@ function renderParticipants() {
             </span>
           </span>
           <span class="credit-meter" aria-label="${escapeHtml(formatCredits(remainingCredits))} crediti rimasti su ${escapeHtml(formatCredits(initialCredits))}">
-            <i class="${meterState}" style="width: ${percentage.toFixed(1)}%"></i>
+            <i style="--credit-hue: ${creditHue}; width: ${percentage.toFixed(1)}%"></i>
           </span>
-        </button>
+          ${renderParticipantSlots(participant)}
+        </article>
       `;
     })
     .join("");
 
-  renderBuyerOptions(dom.buyerSelect);
+  if (dom.buyerSelect) renderBuyerOptions(dom.buyerSelect);
+}
+
+function renderParticipantSlots(participant) {
+  const roster = getRoster(participant);
+  return `
+    <div class="participant-slot-groups" aria-label="Rosa di ${escapeHtml(getParticipantName(participant))}">
+      ${ROLES.map((role) => {
+        const players = roster.filter((player) => getItemRole(player) === role.key);
+        const limit = Math.max(0, Number(getRoleLimit(role.key, participant)) || 0);
+        const filledSlots = players.map((player) => `
+          <span class="participant-slot is-filled" title="${escapeHtml(getSaleName(player))}, ${escapeHtml(formatCredits(getSalePrice(player)))}">
+            <i class="role-badge role-badge-${role.key}" aria-hidden="true">${role.short}</i>
+            <span>${escapeHtml(getSaleName(player))}</span>
+            <strong>${escapeHtml(formatCredits(getSalePrice(player)))}</strong>
+          </span>
+        `);
+        const emptySlots = Array.from({ length: Math.max(0, limit - players.length) }, () => `
+          <span class="participant-slot is-empty">
+            <i class="role-badge role-badge-${role.key}" aria-hidden="true">${role.short}</i>
+            <span>Slot libero</span>
+          </span>
+        `);
+        return `
+          <section class="participant-role-slots">
+            <div class="participant-role-heading">
+              <span>${role.label}</span>
+              <strong>${players.length}/${limit}</strong>
+            </div>
+            <div class="participant-slot-list">${[...filledSlots, ...emptySlots].join("")}</div>
+          </section>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 function renderStage() {
@@ -294,10 +292,14 @@ function renderStage() {
       <div class="role-progress-bar" aria-label="Asta completata"><i style="width: 100%"></i></div>
     `;
     dom.guideTitle.textContent = "Asta completata. Ottimo lavoro!";
-    dom.guideText.textContent = "Puoi ancora consultare, correggere o esportare il registro dell’asta.";
-    setSaleFormAvailability(true);
-    dom.saleHint.classList.remove("is-warning");
-    dom.saleHint.textContent = "L’asta è conclusa: per aggiungere giocatori, correggi prima le battute esistenti.";
+    dom.guideText.textContent = state.readOnly
+      ? "La vista condivisa si aggiorna automaticamente."
+      : "Puoi ancora consultare, correggere o esportare il registro dell’asta.";
+    if (dom.saleForm) {
+      setSaleFormAvailability(true);
+      dom.saleHint.classList.remove("is-warning");
+      dom.saleHint.textContent = "L’asta è conclusa: per aggiungere giocatori, correggi prima le battute esistenti.";
+    }
     return;
   }
 
@@ -310,7 +312,7 @@ function renderStage() {
       <i style="width: ${percentage.toFixed(1)}%"></i>
     </div>
   `;
-  setSaleFormAvailability(false);
+  if (dom.saleForm) setSaleFormAvailability(false);
 
   if (progress.total > 0 && progress.completed >= progress.total) {
     dom.guideTitle.textContent = `${role.label} completati.`;
@@ -320,62 +322,7 @@ function renderStage() {
     dom.guideText.textContent = "Il ruolo avanza quando tutte le squadre hanno completato gli slot disponibili.";
   }
 
-  updateSaleHint();
-}
-
-function renderRoster() {
-  const participant = findParticipant(state.selectedParticipantId);
-
-  if (!participant) {
-    state.selectedParticipantId = null;
-    dom.rosterPanel.hidden = true;
-    return;
-  }
-
-  const roster = getRoster(participant);
-  const remainingCredits = getRemainingCredits(participant);
-  const initialCredits = getInitialCredits(participant);
-
-  dom.rosterPanel.hidden = false;
-  dom.rosterTitle.textContent = getParticipantName(participant);
-  dom.rosterSummary.innerHTML = `
-    <div class="roster-stat">
-      <small>Crediti rimasti</small>
-      <strong>${escapeHtml(formatCredits(remainingCredits))}</strong>
-    </div>
-    <div class="roster-stat">
-      <small>Giocatori</small>
-      <strong>${roster.length}</strong>
-    </div>
-  `;
-
-  dom.rosterGroups.innerHTML = ROLES.map((role) => {
-    const players = roster.filter((player) => getItemRole(player) === role.key);
-    const limit = getRoleLimit(role.key, participant);
-    const playerMarkup = players.length
-      ? players
-        .map((player) => `
-          <li class="roster-player">
-            <span>${escapeHtml(getSaleName(player))}</span>
-            <strong>${escapeHtml(formatCredits(getSalePrice(player)))}</strong>
-          </li>
-        `)
-        .join("")
-      : '<li class="roster-empty">Nessun giocatore</li>';
-
-    return `
-      <section class="roster-group">
-        <div class="roster-group-heading">
-          <span>
-            <i class="role-badge role-badge-${role.key}" aria-hidden="true">${role.short}</i>
-            ${role.label}
-          </span>
-          <strong>${players.length}${limit !== null ? `/${limit}` : ""}</strong>
-        </div>
-        <ul class="roster-player-list">${playerMarkup}</ul>
-      </section>
-    `;
-  }).join("");
+  if (dom.saleForm) updateSaleHint();
 }
 
 function renderHistory() {
@@ -397,7 +344,7 @@ function renderHistory() {
     const saleId = getSaleId(sale);
     const buyer = findParticipant(getSaleParticipantId(sale));
     const buyerName = buyer ? getParticipantName(buyer) : getSaleParticipantName(sale);
-    const canEdit = saleId !== null;
+    const canEdit = !state.readOnly && saleId !== null;
 
     return `
       <article class="history-entry">
@@ -411,7 +358,7 @@ function renderHistory() {
           <small>Acquirente</small>
         </div>
         <strong class="history-price">${escapeHtml(formatCredits(getSalePrice(sale)))}</strong>
-        <div class="history-actions">
+        ${canEdit ? `<div class="history-actions">
           <button
             class="history-action"
             type="button"
@@ -419,7 +366,6 @@ function renderHistory() {
             data-sale-id="${escapeHtml(saleId ?? "")}" 
             aria-label="Modifica ${escapeHtml(getSaleName(sale))}"
             title="Modifica battuta"
-            ${canEdit ? "" : "disabled"}
           >✎</button>
           <button
             class="history-action history-action-delete"
@@ -428,9 +374,8 @@ function renderHistory() {
             data-sale-id="${escapeHtml(saleId ?? "")}" 
             aria-label="Elimina ${escapeHtml(getSaleName(sale))}"
             title="Elimina battuta"
-            ${canEdit ? "" : "disabled"}
           >×</button>
-        </div>
+        </div>` : ""}
       </article>
     `;
   }).join("");
@@ -517,7 +462,6 @@ async function createAuction(event) {
 
     state.auction = extractAuction(response) || await fetchAuctionSnapshot();
     state.showSetup = false;
-    state.selectedParticipantId = null;
     render();
     showToast("Nuova asta pronta: si parte dai portieri!", "success");
   } catch (error) {
@@ -625,7 +569,6 @@ async function importAuction(file) {
 
     state.auction = extractAuction(response) || await fetchAuctionSnapshot();
     state.showSetup = false;
-    state.selectedParticipantId = null;
     render();
     showToast("Asta importata correttamente.", "success");
   } catch (error) {
@@ -784,19 +727,12 @@ function handleClick(event) {
     return;
   }
 
-  if (action === "select-participant") {
-    state.selectedParticipantId = trigger.dataset.participantId;
-    renderParticipants();
-    renderRoster();
+  if (action === "share-auction") {
+    shareAuction();
     return;
   }
 
-  if (action === "close-roster") {
-    state.selectedParticipantId = null;
-    renderParticipants();
-    renderRoster();
-    return;
-  }
+  if (state.readOnly) return;
 
   if (action === "close-edit") {
     closeDialog(dom.editDialog);
@@ -810,6 +746,21 @@ function handleClick(event) {
 
   if (action === "delete-sale") {
     openSaleDelete(trigger.dataset.saleId);
+  }
+}
+
+async function shareAuction() {
+  const shareUrl = state.auction?.access?.share_url;
+  if (!shareUrl) {
+    showToast("Crea o apri un’asta prima di condividerla.", "warning");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(shareUrl);
+    showToast("Link di sola lettura copiato negli appunti.", "success");
+  } catch {
+    window.prompt("Copia il link di sola lettura dell’asta:", shareUrl);
   }
 }
 

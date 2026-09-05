@@ -1,7 +1,7 @@
 networks:
   fantasy_football_tools_network:
     name: fantasy_football_tools_network
-    internal: true
+    internal: false
 
 services:
   fantasy-football-tools:
@@ -35,7 +35,7 @@ services:
     
     env_file:
       - .env
-    
+
     volumes:
       - ./persistent_data/mariadb:/var/lib/mysql
     
@@ -49,4 +49,6 @@ services:
     restart: unless-stopped
     
     networks:
-        - db_network
+      fantasy_football_tools_network:
+        aliases:
+          - db

@@ -533,8 +533,7 @@ select:focus-visible {
 }
 
 .auction-site-header {
-  position: sticky;
-  top: 0;
+  position: relative;
   display: flex;
   min-height: 78px;
   align-items: center;
@@ -1380,7 +1379,7 @@ select:focus-visible {
   z-index: 20;
   width: 340px;
   max-height: calc(100vh - 427px);
-  padding: 20px;
+  padding: 16px;
   overflow-y: auto;
   border: 1px solid rgba(184, 243, 74, 0.25);
   border-radius: 19px;
@@ -1779,6 +1778,53 @@ select:focus-visible {
 /* Adaptation for narrow desktops and touch devices ----------------------- */
 
 @media (min-width: 1321px) {
+  .auction-workspace {
+    display: grid;
+    grid-template-areas:
+      "participants stage roster"
+      "participants history history";
+    grid-template-columns: minmax(250px, 350px) minmax(390px, 760px) minmax(250px, 340px);
+    align-items: start;
+    justify-content: center;
+    gap: 24px;
+    width: min(1600px, calc(100% - 46px));
+    margin: 0 auto;
+    padding: 26px 0 36px;
+  }
+
+  .participant-rail {
+    position: sticky;
+    top: 98px;
+    bottom: auto;
+    left: auto;
+    grid-area: participants;
+    width: auto;
+    max-height: calc(100vh - 120px);
+  }
+
+  .auction-stage {
+    grid-area: stage;
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+  }
+
+  .roster-panel {
+    position: static;
+    grid-area: roster;
+    width: auto;
+    max-height: none;
+    margin: 0;
+  }
+
+  .auction-history {
+    position: static;
+    grid-area: history;
+    width: auto;
+    margin: 0;
+  }
+
   .sale-form {
     grid-template-columns: minmax(145px, 0.72fr) minmax(220px, 1.18fr) auto;
   }
@@ -1787,18 +1833,6 @@ select:focus-visible {
     grid-column: auto;
     width: auto;
     min-width: max-content;
-  }
-}
-
-@media (min-width: 1321px) and (max-height: 960px) {
-  .auction-stage {
-    padding-bottom: 28px;
-  }
-
-  .auction-history {
-    position: static;
-    height: 260px;
-    margin: 24px 23px 24px 325px;
   }
 }
 
@@ -4053,5 +4087,225 @@ select:focus-visible {
   .auth-page *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Auction board: the active auction flows vertically instead of pinning panels
+   to viewport edges. This keeps every team visible and prevents overlap. */
+.auction-workspace {
+  display: grid;
+  grid-template-areas:
+    "stage"
+    "participants"
+    "history";
+  grid-template-columns: minmax(0, 1fr);
+  gap: 26px;
+  width: calc(100% - 2rem);
+  min-height: 0;
+  margin: 0 auto;
+  padding: 34px 0 42px;
+}
+
+.auction-stage {
+  grid-area: stage;
+  width: min(100%, 760px);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  justify-self: center;
+}
+
+.auction-workspace > .auction-stage,
+.auction-workspace > .participant-rail,
+.auction-workspace > .auction-history {
+  order: initial;
+}
+
+.participant-rail {
+  position: static;
+  grid-area: participants;
+  width: auto;
+  max-height: none;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.participants-list {
+  display: flex;
+  gap: 16px;
+  margin: 17px -3px -4px;
+  padding: 3px 3px 12px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: inline proximity;
+}
+
+.auction-utility-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  width: calc(100% - 2rem);
+  margin: 18px auto 0;
+}
+
+.participants-list::-webkit-scrollbar {
+  height: 8px;
+}
+
+.participants-list::-webkit-scrollbar-thumb {
+  border-radius: 99px;
+  background: rgba(184, 243, 74, 0.25);
+}
+
+.participant-card {
+  width: min(340px, calc(100vw - 94px));
+  min-width: 270px;
+  flex: 0 0 min(340px, calc(100vw - 94px));
+  padding: 17px;
+  scroll-snap-align: start;
+}
+
+.participant-card:hover {
+  transform: none;
+}
+
+.credit-meter > i {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--credit-hue, 112) 82% 46%),
+    hsl(calc(var(--credit-hue, 112) + 28) 88% 62%)
+  );
+}
+
+.participant-slot-groups {
+  display: grid;
+  gap: 12px;
+  margin-top: 17px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.participant-role-slots {
+  display: grid;
+  gap: 7px;
+}
+
+.participant-role-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #94aa9c;
+  font-size: var(--font-size-10);
+  font-weight: 800;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.participant-role-heading strong {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  font-weight: 500;
+}
+
+.participant-slot-list {
+  display: grid;
+  gap: 5px;
+}
+
+.participant-slot {
+  display: grid;
+  grid-template-columns: 1.7em minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 2.25em;
+  padding: 6px 7px;
+  border: 1px solid rgba(190, 230, 204, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--muted-strong);
+  font-size: var(--font-size-10);
+}
+
+.participant-slot > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.participant-slot strong {
+  color: var(--gold);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-10);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.participant-slot.is-empty {
+  border-style: dashed;
+  color: #71877a;
+  background: rgba(0, 0, 0, 0.09);
+}
+
+.participant-slot.is-empty .role-badge {
+  opacity: 0.56;
+}
+
+.auction-history {
+  position: static;
+  grid-area: history;
+  width: auto;
+  height: clamp(330px, 42vh, 520px);
+  margin: 0;
+}
+
+.auction-history .history-list {
+  flex: 1 1 auto;
+  height: auto;
+}
+
+.read-only-header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid rgba(116, 220, 255, 0.32);
+  border-radius: 99px;
+  color: #a9e7ff;
+  background: rgba(116, 220, 255, 0.09);
+  font-size: var(--font-size-10);
+  font-weight: 800;
+}
+
+.read-only-header-badge > span {
+  color: #74dcff;
+}
+
+@media (max-width: 780px) {
+  .auction-workspace {
+    gap: 18px;
+    width: calc(100% - 2rem);
+    padding: 21px 0 35px;
+  }
+
+  .participant-rail {
+    order: initial;
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .participant-card {
+    width: min(330px, calc(100vw - 72px));
+    min-width: min(270px, calc(100vw - 72px));
+    flex-basis: min(330px, calc(100vw - 72px));
+  }
+
+  .auction-history {
+    order: initial;
+    height: 390px;
+    padding: 16px;
+    border-radius: 16px;
   }
 }

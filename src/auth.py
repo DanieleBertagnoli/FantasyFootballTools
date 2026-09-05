@@ -92,7 +92,7 @@ def configure_auth(app: Flask) -> None:
     defaults: dict[str, Any] = {
         "AUTH_REQUIRE_LOGIN": _environment_flag("AUTH_REQUIRE_LOGIN", True),
         "AUTH_CSRF_ENABLED": _environment_flag("AUTH_CSRF_ENABLED", True),
-        "AUTH_PASSWORD_MIN_LENGTH": _environment_value("AUTH_PASSWORD_MIN_LENGTH") or "12",
+        "AUTH_PASSWORD_MIN_LENGTH": _environment_value("AUTH_PASSWORD_MIN_LENGTH") or "8",
         "AUTH_EMAIL_VERIFICATION_TTL_SECONDS": _environment_value(
             "AUTH_EMAIL_VERIFICATION_TTL_SECONDS",
             "AUTH_VERIFICATION_TOKEN_TTL_SECONDS",
@@ -164,7 +164,7 @@ def validate_password(value: Any, confirmation: Any | None = None) -> str:
 
     if not isinstance(value, str):
         raise AuthValidationError("Inserisci una password.")
-    minimum_length = _positive_int_config("AUTH_PASSWORD_MIN_LENGTH", 12)
+    minimum_length = _positive_int_config("AUTH_PASSWORD_MIN_LENGTH", 8)
     if not minimum_length <= len(value) <= _PASSWORD_MAX_LENGTH:
         raise AuthValidationError(
             f"La password deve contenere da {minimum_length} a {_PASSWORD_MAX_LENGTH} caratteri."

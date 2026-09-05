@@ -55,7 +55,7 @@ La registrazione salva in MariaDB una password hashata e lo stato
 viene creata alcuna sessione di accesso. Sono inclusi reinvio della conferma,
 recupero password e link di reset monouso.
 
-Le password devono avere almeno 12 caratteri, maiuscola, minuscola, numero e
+Le password devono avere almeno 8 caratteri, maiuscola, minuscola, numero e
 simbolo. La barra nella pagina di registrazione fornisce un riscontro immediato,
 ma le stesse regole sono sempre verificate dal server.
 

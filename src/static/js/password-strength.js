@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const MINIMUM_LENGTH = 12;
+  const MINIMUM_LENGTH = 8;
   const commonPasswords = new Set([
     "password",
     "password123",

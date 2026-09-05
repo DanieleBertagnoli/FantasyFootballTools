@@ -29,12 +29,13 @@
       <a class="header-link" href="{{ url_for('home') }}">
         <span aria-hidden="true">⌂</span> Dashboard
       </a>
+      {% if not shared_auction|default(false) %}
       <button class="button button-quiet" type="button" data-action="show-setup">
         <span aria-hidden="true">+</span> Nuova asta
       </button>
-      <button class="button button-primary button-export" type="button" data-action="export-auction">
-        <span aria-hidden="true">⇩</span> Esporta JSON
-      </button>
+      {% else %}
+      <span class="read-only-header-badge"><span aria-hidden="true">◉</span> Vista condivisa</span>
+      {% endif %}
       {% if current_user %}
       <span class="header-account-email" title="{{ current_user.email }}"><span aria-hidden="true">●</span> {{ current_user.email }}</span>
       <form class="header-logout-form" method="post" action="{{ url_for('auth.logout') }}">
@@ -48,7 +49,18 @@
     </div>
   </header>
 
-  <main id="auctionApp" class="auction-app">
+  <main id="auctionApp" class="auction-app" data-shared-auction="{{ 'true' if shared_auction|default(false) else 'false' }}"
+    data-shared-auction-token="{{ shared_auction_token|default('', true) }}">
+    {% if not shared_auction|default(false) %}
+    <div id="auctionUtilityActions" class="auction-utility-actions" hidden aria-label="Azioni dell'asta">
+      <button class="button button-primary button-export" type="button" data-action="export-auction">
+        <span aria-hidden="true">⇩</span> Esporta JSON
+      </button>
+      <button class="button button-secondary button-share" type="button" data-action="share-auction" disabled hidden>
+        <span aria-hidden="true">↗</span> Condividi
+      </button>
+    </div>
+    {% endif %}
     <section id="auctionLoading" class="auction-loading" aria-live="polite">
       <span class="loading-ball" aria-hidden="true">⚽</span>
       <p>Sto preparando il tabellone dell'asta…</p>
@@ -162,17 +174,17 @@
     </section>
 
     <section id="auctionView" class="auction-workspace" hidden aria-label="Asta in corso">
-      <aside class="participant-rail" aria-labelledby="participantsTitle">
+      <section class="participant-rail" aria-labelledby="participantsTitle">
         <div class="rail-heading">
           <div>
-            <p class="section-kicker">Bilancio live</p>
-            <h2 id="participantsTitle">Partecipanti</h2>
+            <p class="section-kicker">Bilancio e rose live</p>
+            <h2 id="participantsTitle">Tutte le squadre</h2>
           </div>
           <span id="participantsTotal" class="counter-pill"></span>
         </div>
-        <p class="rail-helper">Seleziona una squadra per vedere la rosa.</p>
+        <p class="rail-helper">Crediti, ruoli e slot aggiornati dopo ogni battuta.</p>
         <div id="participantsList" class="participants-list"></div>
-      </aside>
+      </section>
 
       <section class="auction-stage" aria-labelledby="currentRoleTitle">
         <div class="stage-topline">
@@ -184,6 +196,7 @@
           <div id="roleProgress" class="role-progress" aria-live="polite"></div>
         </div>
 
+        {% if not shared_auction|default(false) %}
         <section class="sale-panel" aria-labelledby="saleTitle">
           <div class="sale-panel-heading">
             <div>
@@ -226,6 +239,7 @@
           </form>
           <p id="saleHint" class="sale-hint">Inserisci i dati della battuta appena conclusa.</p>
         </section>
+        {% endif %}
 
         <section class="auction-guide" aria-label="Riepilogo della fase corrente">
           <div class="auction-guide-icon" id="currentRoleIcon" aria-hidden="true">🧤</div>
@@ -235,18 +249,6 @@
           </div>
         </section>
       </section>
-
-      <aside id="rosterPanel" class="roster-panel" hidden aria-labelledby="rosterTitle">
-        <div class="roster-panel-heading">
-          <div>
-            <p class="section-kicker">Rosa attuale</p>
-            <h2 id="rosterTitle">Seleziona una squadra</h2>
-          </div>
-          <button class="icon-button" type="button" data-action="close-roster" aria-label="Chiudi la rosa">×</button>
-        </div>
-        <div id="rosterSummary" class="roster-summary"></div>
-        <div id="rosterGroups" class="roster-groups"></div>
-      </aside>
 
       <section class="auction-history" aria-labelledby="historyTitle">
         <div class="history-heading">

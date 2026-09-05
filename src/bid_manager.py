@@ -11,6 +11,7 @@ import copy
 import json
 import os
 import re
+import secrets
 import tempfile
 import uuid
 from collections.abc import Mapping, MutableMapping, Sequence
@@ -19,7 +20,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from flask import Blueprint, Response, current_app, jsonify, request, session
+from flask import Blueprint, Response, current_app, g, jsonify, render_template, request, session, url_for
 
 
 SCHEMA_VERSION = 1
@@ -59,6 +60,7 @@ _ROLE_ALIASES = {
 }
 
 _SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_SHARE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
 _INTEGER_PATTERN = re.compile(r"^[0-9]+$")
 _STORE_LOCK = RLock()
 
@@ -85,6 +87,12 @@ class AuctionStorageError(AuctionError):
     status_code = 500
 
 
+class AuctionAuthorizationError(AuctionError):
+    """Raised when a non-owner tries to change an auction."""
+
+    status_code = 403
+
+
 def _utc_now() -> str:
     """Return a stable, JSON-friendly UTC timestamp."""
 
@@ -95,6 +103,12 @@ def _new_id() -> str:
     """Create a URL-safe identifier for auctions, participants, and sales."""
 
     return uuid.uuid4().hex
+
+
+def _new_share_token() -> str:
+    """Create an unguessable, URL-safe capability for read-only sharing."""
+
+    return secrets.token_urlsafe(32)
 
 
 def _as_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
@@ -143,6 +157,16 @@ def _normalise_id(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not _SAFE_ID_PATTERN.fullmatch(value):
         raise AuctionError(f"{field_name} is invalid.")
     return value
+
+
+def _normalise_share_token(value: Any, field_name: str = "Share token") -> str:
+    if not isinstance(value, str) or not _SHARE_TOKEN_PATTERN.fullmatch(value):
+        raise AuctionError(f"{field_name} is invalid.")
+    return value
+
+
+def _normalise_owner_user_id(value: Any) -> int:
+    return _normalise_integer(value, "Auction owner", 1)
 
 
 def canonical_role(role: Any) -> str:
@@ -433,6 +457,8 @@ def create_auction(
     participants: Any,
     credits: Any = None,
     role_limits: Any = None,
+    *,
+    owner_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Create a new empty auction from a list of names or participant objects.
 
@@ -454,6 +480,9 @@ def create_auction(
         ),
         "sales": [],
     }
+    if owner_user_id is not None:
+        auction["owner_user_id"] = _normalise_owner_user_id(owner_user_id)
+        auction["share_token"] = _new_share_token()
     return validate_auction(auction)
 
 
@@ -478,12 +507,26 @@ def validate_auction(value: Any) -> dict[str, Any]:
         updated_at = _normalise_timestamp(raw_auction.get("updated_at"), created_at)
         participants = _normalise_stored_participants(raw_auction.get("participants"))
         sales = _replay_sales(participants, raw_auction.get("sales", []))
+        supplied_owner = raw_auction.get("owner_user_id")
+        owner_user_id = (
+            _normalise_owner_user_id(supplied_owner)
+            if supplied_owner is not None
+            else None
+        )
+        supplied_share_token = raw_auction.get("share_token")
+        share_token = (
+            _normalise_share_token(supplied_share_token)
+            if supplied_share_token is not None
+            else None
+        )
+        if (owner_user_id is None) != (share_token is None):
+            raise AuctionImportError("Auction ownership metadata is incomplete.")
     except AuctionImportError:
         raise
     except AuctionError as error:
         raise AuctionImportError(str(error)) from error
 
-    return {
+    canonical_auction = {
         "schema_version": SCHEMA_VERSION,
         "id": auction_id,
         "created_at": created_at,
@@ -491,6 +534,10 @@ def validate_auction(value: Any) -> dict[str, Any]:
         "participants": participants,
         "sales": sales,
     }
+    if owner_user_id is not None:
+        canonical_auction["owner_user_id"] = owner_user_id
+        canonical_auction["share_token"] = share_token
+    return canonical_auction
 
 
 def import_auction(value: Any) -> dict[str, Any]:
@@ -779,6 +826,19 @@ class AuctionRepository:
     def load(self, auction_id: Any) -> dict[str, Any]:
         return self._store_for(auction_id).load()
 
+    def load_by_share_token(self, share_token: Any) -> dict[str, Any]:
+        """Find the persisted auction matching a read-only share capability."""
+
+        token = _normalise_share_token(share_token)
+        if not self.directory.is_dir():
+            raise AuctionNotFoundError("The shared auction could not be found.")
+
+        for path in self.directory.glob("*.json"):
+            auction = JsonAuctionStore(path).load()
+            if secrets.compare_digest(str(auction.get("share_token") or ""), token):
+                return auction
+        raise AuctionNotFoundError("The shared auction could not be found.")
+
     def save(self, auction: Any) -> dict[str, Any]:
         canonical_auction = validate_auction(auction)
         return self._store_for(canonical_auction["id"]).save(canonical_auction)
@@ -821,6 +881,41 @@ def load_active_auction(
         raise
 
 
+def _current_user_id() -> int:
+    """Return the verified account ID installed by the auth request hook."""
+
+    user = getattr(g, "current_user", None)
+    user_id = getattr(user, "id", None)
+    if isinstance(user_id, int) and user_id > 0:
+        return user_id
+    raise AuctionAuthorizationError("Devi accedere con un account confermato.")
+
+
+def load_owned_active_auction(
+    session_data: MutableMapping[str, Any],
+    repository: AuctionRepository,
+    owner_user_id: int,
+) -> dict[str, Any]:
+    """Load the session auction only when the current user owns it.
+
+    Existing local auctions created before account ownership existed are claimed
+    once by the user who still has their signed browser session.
+    """
+
+    auction = load_active_auction(session_data, repository)
+    stored_owner = auction.get("owner_user_id")
+    if stored_owner is None:
+        claimed_auction = copy.deepcopy(auction)
+        claimed_auction["owner_user_id"] = _normalise_owner_user_id(owner_user_id)
+        claimed_auction["share_token"] = _new_share_token()
+        return repository.save(claimed_auction)
+    if stored_owner != owner_user_id:
+        session_data.pop(SESSION_AUCTION_ID_KEY, None)
+        _mark_session_modified(session_data)
+        raise AuctionAuthorizationError("Questa asta appartiene a un altro account.")
+    return auction
+
+
 def save_active_auction(
     session_data: MutableMapping[str, Any],
     repository: AuctionRepository,
@@ -838,11 +933,11 @@ def discard_active_auction(
     session_data: MutableMapping[str, Any],
     repository: AuctionRepository,
 ) -> bool:
-    """Delete only the auction selected by this browser session."""
+    """Forget the selected auction without deleting its shared persistent state."""
 
     auction_id = session_data.pop(SESSION_AUCTION_ID_KEY, None)
     _mark_session_modified(session_data)
-    return repository.delete(auction_id) if auction_id else False
+    return bool(auction_id)
 
 
 def _request_object() -> Mapping[str, Any]:
@@ -868,11 +963,40 @@ def _request_import_payload() -> Any:
     return payload
 
 
-def _create_from_request(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _create_from_request(payload: Mapping[str, Any], owner_user_id: int) -> dict[str, Any]:
     participants = _read_first(payload, "participants", "participant_names")
     credits = _read_first(payload, "credits", "initial_credits", "budget")
     role_limits = _read_first(payload, "role_limits", "players_per_role")
-    return create_auction(participants, credits, role_limits)
+    return create_auction(
+        participants,
+        credits,
+        role_limits,
+        owner_user_id=owner_user_id,
+    )
+
+
+def _share_url(share_token: str) -> str:
+    path = url_for("bid_manager.shared_auction", share_token=share_token)
+    configured_base = current_app.config.get("APP_BASE_URL")
+    if isinstance(configured_base, str) and configured_base.strip():
+        return configured_base.rstrip("/") + path
+    return url_for("bid_manager.shared_auction", share_token=share_token, _external=True)
+
+
+def _admin_auction_state(auction: Any) -> dict[str, Any]:
+    state = auction_state(auction)
+    share_token = _normalise_share_token(validate_auction(auction)["share_token"])
+    state["access"] = {
+        "can_manage": True,
+        "share_url": _share_url(share_token),
+    }
+    return state
+
+
+def _shared_auction_state(auction: Any) -> dict[str, Any]:
+    state = auction_state(auction)
+    state["access"] = {"can_manage": False}
+    return state
 
 
 bid_bp = Blueprint("bid_manager", __name__)
@@ -883,6 +1007,19 @@ def _handle_auction_error(error: AuctionError):
     return jsonify({"error": str(error)}), error.status_code
 
 
+@bid_bp.get("/auction/shared/<share_token>")
+def shared_auction(share_token: str):
+    """Render the authenticated read-only view for a shared auction."""
+
+    with _STORE_LOCK:
+        _repository_for_current_app().load_by_share_token(share_token)
+    return render_template(
+        "bid-manager.html",
+        shared_auction=True,
+        shared_auction_token=share_token,
+    )
+
+
 @bid_bp.get("/api/auction")
 def get_auction():
     """Return the active auction, or `null` before one has been created."""
@@ -890,15 +1027,24 @@ def get_auction():
     repository = _repository_for_current_app()
     try:
         with _STORE_LOCK:
-            auction = load_active_auction(session, repository)
+            auction = load_owned_active_auction(session, repository, _current_user_id())
     except AuctionNotFoundError:
         return jsonify({"auction": None})
-    return jsonify({"auction": auction_state(auction)})
+    return jsonify({"auction": _admin_auction_state(auction)})
+
+
+@bid_bp.get("/api/auction/shared/<share_token>")
+def get_shared_auction(share_token: str):
+    """Return a shared auction snapshot without granting write access."""
+
+    with _STORE_LOCK:
+        auction = _repository_for_current_app().load_by_share_token(share_token)
+    return jsonify({"auction": _shared_auction_state(auction)})
 
 
 @bid_bp.post("/api/auction/session/close")
 def close_auction_session_endpoint():
-    """Discard the active auction when its browser session is ending."""
+    """Detach the active auction from this browser without deleting it."""
 
     with _STORE_LOCK:
         discard_active_auction(session, _repository_for_current_app())
@@ -910,10 +1056,10 @@ def create_auction_endpoint():
     """Start a new auction and make it the current session's active auction."""
 
     payload = _request_object()
-    auction = _create_from_request(payload)
+    auction = _create_from_request(payload, _current_user_id())
     with _STORE_LOCK:
         saved_auction = save_active_auction(session, _repository_for_current_app(), auction)
-    return jsonify({"auction": auction_state(saved_auction)}), 201
+    return jsonify({"auction": _admin_auction_state(saved_auction)}), 201
 
 
 @bid_bp.post("/api/auction/import")
@@ -925,13 +1071,15 @@ def import_auction_endpoint():
     # silently overwriting another session's file with the same exported ID.
     imported_auction["id"] = _new_id()
     imported_auction["updated_at"] = _utc_now()
+    imported_auction["owner_user_id"] = _current_user_id()
+    imported_auction["share_token"] = _new_share_token()
     with _STORE_LOCK:
         saved_auction = save_active_auction(
             session,
             _repository_for_current_app(),
             imported_auction,
         )
-    return jsonify({"auction": auction_state(saved_auction)}), 201
+    return jsonify({"auction": _admin_auction_state(saved_auction)}), 201
 
 
 @bid_bp.get("/api/auction/export")
@@ -939,7 +1087,11 @@ def export_auction_endpoint():
     """Download the active auction in the portable JSON format."""
 
     with _STORE_LOCK:
-        auction = load_active_auction(session, _repository_for_current_app())
+        auction = load_owned_active_auction(
+            session,
+            _repository_for_current_app(),
+            _current_user_id(),
+        )
     document = export_auction(auction)
     return Response(
         document,
@@ -961,10 +1113,10 @@ def add_player_endpoint():
 
     with _STORE_LOCK:
         repository = _repository_for_current_app()
-        auction = load_active_auction(session, repository)
+        auction = load_owned_active_auction(session, repository, _current_user_id())
         updated_auction = add_sale(auction, player_name, price, participant_id)
         saved_auction = save_active_auction(session, repository, updated_auction)
-    return jsonify({"auction": auction_state(saved_auction)}), 201
+    return jsonify({"auction": _admin_auction_state(saved_auction)}), 201
 
 
 @bid_bp.patch("/api/auction/players/<sale_id>")
@@ -983,7 +1135,7 @@ def edit_player_endpoint(sale_id: str):
     )
     with _STORE_LOCK:
         repository = _repository_for_current_app()
-        auction = load_active_auction(session, repository)
+        auction = load_owned_active_auction(session, repository, _current_user_id())
         updated_auction = edit_sale(
             auction,
             sale_id,
@@ -991,7 +1143,7 @@ def edit_player_endpoint(sale_id: str):
             participant_id=participant_id,
         )
         saved_auction = save_active_auction(session, repository, updated_auction)
-    return jsonify({"auction": auction_state(saved_auction)})
+    return jsonify({"auction": _admin_auction_state(saved_auction)})
 
 
 @bid_bp.delete("/api/auction/players/<sale_id>")
@@ -1000,7 +1152,7 @@ def delete_player_endpoint(sale_id: str):
 
     with _STORE_LOCK:
         repository = _repository_for_current_app()
-        auction = load_active_auction(session, repository)
+        auction = load_owned_active_auction(session, repository, _current_user_id())
         updated_auction = delete_sale(auction, sale_id)
         saved_auction = save_active_auction(session, repository, updated_auction)
-    return jsonify({"auction": auction_state(saved_auction)})
+    return jsonify({"auction": _admin_auction_state(saved_auction)})
