@@ -65,6 +65,33 @@ services:
       - npm_network
       - fantasy_football_tools_network
 
+  retention-worker:
+    build:
+      context: .
+    command: ["python", "-m", "data_retention"]
+    volumes:
+      - ./persistent_data/bid_manager_auctions:/app/persistent_data/bid_manager_auctions
+      - ./persistent_data/notes_manager_notes:/app/persistent_data/notes_manager_notes
+    tmpfs:
+      - /tmp
+    read_only: true
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    init: true
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from pathlib import Path; assert time.time() - float(Path('/tmp/retention-worker-heartbeat').read_text()) < 180"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
   fantasy-football-tools-db:
     container_name: fantasy-football-tools-db
     

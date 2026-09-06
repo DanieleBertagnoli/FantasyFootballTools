@@ -121,7 +121,13 @@ ma le stesse regole sono sempre verificate dal server.
 3. Seleziona un partecipante per vedere la rosa; usa lo storico per correggere prezzo o acquirente, oppure eliminare una battuta.
 4. Esporta il JSON per riprendere l'asta in seguito con **Importa asta**.
 
-L'asta attiva viene conservata localmente per la sessione del browser. Esporta sempre il JSON per un backup portabile e per riprendere l'asta su un altro browser o dispositivo.
+Il link **Condividi** permette di consultare un'asta in sola lettura senza
+registrarsi o accedere. Per le aste in modalità live, anche in pausa, serve
+invece un account confermato. Se l'organizzatore attiva la modalità live,
+i visitatori anonimi vengono invitati ad accedere al successivo aggiornamento.
+
+L'asta viene conservata sul server per un massimo di **72 ore dalla creazione**.
+Esporta il JSON prima della scadenza per conservarla o riprenderla su un altro dispositivo.
 
 ## Notes Manager
 
@@ -130,7 +136,34 @@ L'asta attiva viene conservata localmente per la sessione del browser. Esporta s
 3. Correggi o elimina una scheda in qualsiasi momento; l'archivio resta organizzato per ruolo e fascia.
 4. Esporta il JSON per riprendere il lavoro in seguito oppure il Markdown per condividere una tabella ordinata con la tua lega.
 
-Anche le note attive vengono conservate localmente per la sessione del browser. Per un backup portabile usa l'esportazione JSON.
+Anche le note hanno una durata massima di **72 ore dalla creazione**; la chiusura
+della sessione delle note può eliminarle prima. Per conservarle usa l'esportazione JSON.
+
+## Pulizia automatica di aste e note
+
+Il servizio Compose `retention-worker` esegue una pulizia all'avvio e ogni minuto.
+Elimina ciascun JSON scaduto nelle sole cartelle `persistent_data/bid_manager_auctions/`
+e `persistent_data/notes_manager_notes/`, oltre ai file temporanei abbandonati da
+almeno 72 ore. Il database degli utenti, il catalogo e i backup non sono coinvolti.
+
+La scadenza usa `created_at` in UTC: modificare un documento non prolunga la
+durata, nemmeno per le aste live. Le API rifiutano letture e salvataggi alla
+scadenza; il file viene rimosso al successivo passaggio del worker (normalmente
+entro un minuto). La regola vale anche per i documenti già presenti. Per file
+corrotti o privi di una data valida viene usata l'ultima modifica del file.
+Reimportare un JSON crea una nuova copia con altre 72 ore disponibili.
+
+Il worker usa lo stesso utente non root dell'app, riparte automaticamente dopo
+un arresto imprevisto e ha un controllo di salute. Per avviarlo insieme all'app:
+
+```bash
+docker compose up --build -d
+docker compose logs retention-worker
+```
+
+In sviluppo senza Docker, esegui `python src/data_retention.py` in un processo
+separato. L'opzione `--once` esegue una sola pulizia; `--data-root` permette di
+indicare una cartella di dati diversa.
 
 ## Ricerca calciatori
 

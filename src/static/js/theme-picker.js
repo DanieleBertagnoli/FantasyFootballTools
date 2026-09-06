@@ -3,18 +3,21 @@
 
   const STORAGE_KEY = "fantasta:theme";
   const THEMES = new Set(["green", "blue", "white", "dark"]);
+  // Tema iniziale: "green", "blue", "white" oppure "dark".
+  // Una scelta già salvata nel browser ha la precedenza.
+  const DEFAULT_THEME = "blue";
 
   function savedTheme() {
     try {
       const theme = window.localStorage.getItem(STORAGE_KEY);
-      return THEMES.has(theme) ? theme : "blue";
+      return THEMES.has(theme) ? theme : DEFAULT_THEME;
     } catch {
-      return "blue";
+      return DEFAULT_THEME;
     }
   }
 
   function applyTheme(theme) {
-    const selectedTheme = THEMES.has(theme) ? theme : "blue";
+    const selectedTheme = THEMES.has(theme) ? theme : DEFAULT_THEME;
     document.documentElement.dataset.theme = selectedTheme;
     document.querySelectorAll("[data-theme-choice]").forEach((button) => {
       const isCurrent = button.dataset.themeChoice === selectedTheme;

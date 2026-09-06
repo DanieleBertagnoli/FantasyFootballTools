@@ -56,6 +56,11 @@ SESSION_USER_ID_KEY = "auth_user_id"
 SESSION_VERSION_KEY = "auth_session_version"
 CSRF_SESSION_KEY = "auth_csrf_token"
 PUBLIC_ENDPOINTS = {"healthz", "privacy_policy", "cookie_policy", "terms_of_service"}
+# These views check the persisted auction mode before allowing anonymous reads.
+SHARED_AUCTION_READ_ENDPOINTS = {
+    "bid_manager.shared_auction",
+    "bid_manager.get_shared_auction",
+}
 _EMAIL_PATTERN = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,253}$")
 _PASSWORD_MAX_LENGTH = 128
 _COMMON_PASSWORDS = {
@@ -372,7 +377,7 @@ def load_verified_user_and_protect_routes() -> Response | None:
         except AuthDatabaseError:
             # Public account pages still need to load gracefully when a local
             # developer has not configured MariaDB yet.
-            if endpoint == "static" or endpoint.startswith("auth."):
+            if endpoint == "static" or endpoint.startswith("auth.") or endpoint in SHARED_AUCTION_READ_ENDPOINTS:
                 _clear_session()
                 user = None
             else:
@@ -385,6 +390,8 @@ def load_verified_user_and_protect_routes() -> Response | None:
     if not current_app.config.get("AUTH_REQUIRE_LOGIN", True):
         return None
     if endpoint == "static" or endpoint.startswith("auth.") or endpoint in PUBLIC_ENDPOINTS:
+        return None
+    if endpoint in SHARED_AUCTION_READ_ENDPOINTS and request.method in {"GET", "HEAD"}:
         return None
     if _current_user() is not None:
         return None

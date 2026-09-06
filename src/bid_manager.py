@@ -23,7 +23,10 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from flask import Blueprint, Response, current_app, g, jsonify, render_template, request, session, url_for
+from flask import Blueprint, Response, current_app, g, jsonify, redirect, render_template, request, session, url_for
+
+from auth import SHARED_AUCTION_READ_ENDPOINTS
+from data_retention import is_expired
 
 
 SCHEMA_VERSION = 1
@@ -1331,7 +1334,7 @@ def auction_state(auction: Any, *, viewer_user_id: int | None = None) -> dict[st
                 "role_limits": copy.deepcopy(participant["role_limits"]),
                 "roster": rosters[participant_id],
                 "claimed": participant_id in claims,
-                "claimed_by_me": claims.get(participant_id) == viewer_user_id,
+                "claimed_by_me": viewer_user_id is not None and claims.get(participant_id) == viewer_user_id,
                 "connection_status": (
                     "unclaimed"
                     if participant_id not in claims
@@ -1434,13 +1437,22 @@ class JsonAuctionStore:
             raise AuctionNotFoundError("The saved auction could not be found.")
 
         try:
-            raw_data = self.path.read_text(encoding="utf-8")
+            with self.path.open(encoding="utf-8") as source:
+                raw_data = source.read()
+                modified_at = os.fstat(source.fileno()).st_mtime
+        except FileNotFoundError as error:
+            raise AuctionNotFoundError("The saved auction could not be found.") from error
         except OSError as error:
             raise AuctionStorageError("The saved auction could not be read.") from error
-        return import_auction(raw_data)
+        auction = import_auction(raw_data)
+        if is_expired(json.loads(raw_data), fallback_mtime=modified_at):
+            raise AuctionNotFoundError("L'asta è scaduta dopo 72 ore dalla creazione. Crea o importa una nuova asta.")
+        return auction
 
     def save(self, auction: Any) -> dict[str, Any]:
         canonical_auction = validate_auction(auction)
+        if is_expired(canonical_auction):
+            raise AuctionNotFoundError("L'asta è scaduta dopo 72 ore dalla creazione. Crea o importa una nuova asta.")
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             descriptor, temporary_name = tempfile.mkstemp(
@@ -1502,7 +1514,7 @@ class AuctionRepository:
         for path in self.directory.glob("*.json"):
             try:
                 auction = JsonAuctionStore(path).load()
-            except AuctionStorageError:
+            except (AuctionStorageError, AuctionNotFoundError):
                 # A legacy file can have been created by an older container
                 # user. It must not make every other shared auction fail.
                 continue
@@ -1671,13 +1683,35 @@ def _admin_auction_state(auction: Any, viewer_user_id: int) -> dict[str, Any]:
     return state
 
 
-def _shared_auction_state(auction: Any, viewer_user_id: int) -> dict[str, Any]:
+def _shared_auction_state(auction: Any, viewer_user_id: int | None) -> dict[str, Any]:
     state = auction_state(auction, viewer_user_id=viewer_user_id)
     state["access"] = {"can_manage": False}
     return state
 
 
 bid_bp = Blueprint("bid_manager", __name__)
+
+
+@bid_bp.after_request
+def prevent_shared_auction_caching(response: Response) -> Response:
+    # A public auction may become live between two polling requests.
+    if request.endpoint in SHARED_AUCTION_READ_ENDPOINTS:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _shared_auction_login_response(auction: Mapping[str, Any]) -> Response | None:
+    if not auction.get("interactive", {}).get("enabled") or getattr(g, "current_user", None) is not None:
+        return None
+    login_url = url_for(
+        "auth.login",
+        next=url_for("bid_manager.shared_auction", share_token=auction["share_token"]),
+    )
+    if request.endpoint == "bid_manager.get_shared_auction":
+        response = jsonify({"error": "Accedi per seguire l'asta live.", "login_url": login_url})
+        response.status_code = 401
+        return response
+    return redirect(login_url)
 
 
 @bid_bp.errorhandler(AuctionError)
@@ -1687,10 +1721,13 @@ def _handle_auction_error(error: AuctionError):
 
 @bid_bp.get("/auction/shared/<share_token>")
 def shared_auction(share_token: str):
-    """Render the authenticated read-only view for a shared auction."""
+    """Allow anonymous viewing of classic auctions; require login for live ones."""
 
     with _STORE_LOCK:
-        _repository_for_current_app().load_by_share_token(share_token)
+        auction = _repository_for_current_app().load_by_share_token(share_token)
+        login_response = _shared_auction_login_response(auction)
+        if login_response is not None:
+            return login_response
     return render_template(
         "bid-manager.html",
         shared_auction=True,
@@ -1720,14 +1757,18 @@ def get_auction():
 def get_shared_auction(share_token: str):
     """Return a shared auction snapshot without granting write access."""
 
-    user_id = _current_user_id()
+    user_id = getattr(getattr(g, "current_user", None), "id", None)
     with _STORE_LOCK:
         repository = _repository_for_current_app()
         auction = repository.load_by_share_token(share_token)
-        auction, turn_changed = skip_completed_interactive_turns(auction)
-        auction, presence_changed = refresh_interactive_presence(auction, user_id)
-        if turn_changed or presence_changed:
-            auction = repository.save(auction)
+        login_response = _shared_auction_login_response(auction)
+        if login_response is not None:
+            return login_response
+        if user_id is not None:
+            auction, turn_changed = skip_completed_interactive_turns(auction)
+            auction, presence_changed = refresh_interactive_presence(auction, user_id)
+            if turn_changed or presence_changed:
+                auction = repository.save(auction)
     return jsonify({"auction": _shared_auction_state(auction, user_id)})
 
 
@@ -1902,7 +1943,7 @@ def import_auction_endpoint():
     # Treat every import as a new local copy.  This avoids one browser session
     # silently overwriting another session's file with the same exported ID.
     imported_auction["id"] = _new_id()
-    imported_auction["updated_at"] = _utc_now()
+    imported_auction["created_at"] = imported_auction["updated_at"] = _utc_now()
     user_id = _current_user_id()
     imported_auction["owner_user_id"] = user_id
     imported_auction["share_token"] = _new_share_token()

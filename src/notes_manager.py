@@ -17,6 +17,7 @@ from typing import Any
 
 from flask import Blueprint, Response, current_app, jsonify, request, session
 
+from data_retention import is_expired
 
 SCHEMA_VERSION = 1
 SESSION_NOTE_ID_KEY = "notes_manager_note_id"
@@ -508,16 +509,25 @@ class JsonNotesStore:
         if not self.path.is_file():
             raise NoteNotFoundError("The saved note could not be found.")
         try:
-            raw = self.path.read_text(encoding="utf-8")
+            with self.path.open(encoding="utf-8") as source:
+                raw = source.read()
+                modified_at = os.fstat(source.fileno()).st_mtime
+        except FileNotFoundError as error:
+            raise NoteNotFoundError("The saved note could not be found.") from error
         except OSError as error:
             raise NotesStorageError("The saved note could not be read.") from error
         try:
-            return import_note(raw)
+            note = import_note(raw)
         except NoteImportError as error:
             raise NotesStorageError("The saved note is not valid JSON.") from error
+        if is_expired(json.loads(raw), fallback_mtime=modified_at):
+            raise NoteNotFoundError("La raccolta è scaduta dopo 72 ore dalla creazione. Crea o importa nuove note.")
+        return note
 
     def save(self, note: Any) -> dict[str, Any]:
         canonical = validate_note(note)
+        if is_expired(canonical):
+            raise NoteNotFoundError("La raccolta è scaduta dopo 72 ore dalla creazione. Crea o importa nuove note.")
         temporary_name: str | None = None
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -705,7 +715,7 @@ def import_note_endpoint():
 
     note = import_note(_request_import_payload())
     note["id"] = _new_id()
-    note["updated_at"] = _utc_now()
+    note["created_at"] = note["updated_at"] = _utc_now()
     with _STORE_LOCK:
         saved = save_active_note(session, _repository_for_current_app(), note)
     return jsonify({"note": note_state(saved)}), 201

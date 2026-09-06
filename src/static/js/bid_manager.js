@@ -174,6 +174,12 @@ async function loadAuction() {
     const response = await request(API.auction);
     state.auction = extractAuction(response);
   } catch (error) {
+    if (state.readOnly && error.status === 401) {
+      // Re-enter through the shared page when its owner enables live mode.
+      // The server redirects to login and preserves the shared destination.
+      window.location.reload();
+      return;
+    }
     if (error.status !== 404) {
       showToast(error.message || "Impossibile caricare l'asta.", "error");
     }
