@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Organizza le tue valutazioni sui giocatori prima dell'asta di fantacalcio.">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>FantAsta | Notes Manager</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -242,6 +243,14 @@
       </section>
     </section>
   </main>
+
+  <footer class="site-footer">
+    <nav class="legal-links" aria-label="Documenti legali">
+      <a href="{{ url_for('privacy_policy') }}">Privacy</a>
+      <a href="{{ url_for('cookie_policy') }}">Cookie</a>
+      <a href="{{ url_for('terms_of_service') }}">Termini</a>
+    </nav>
+  </footer>
 
   <dialog id="editPlayerDialog" class="auction-dialog notes-dialog" aria-labelledby="editPlayerTitle">
     <form id="editPlayerForm" class="dialog-card notes-dialog-card" method="dialog" novalidate>

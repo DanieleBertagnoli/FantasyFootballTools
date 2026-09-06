@@ -8,14 +8,17 @@ the blueprint at the bottom only deals with requests and persistence.
 from __future__ import annotations
 
 import copy
+import csv
+import io
 import json
 import os
+import random
 import re
 import secrets
 import tempfile
 import uuid
 from collections.abc import Mapping, MutableMapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -37,21 +40,25 @@ ROLE_LABELS = {
 }
 
 _ROLE_ALIASES = {
+    "p": "goalkeepers",
     "goalkeepers": "goalkeepers",
     "goalkeeper": "goalkeepers",
     "gk": "goalkeepers",
     "portieri": "goalkeepers",
     "portiere": "goalkeepers",
+    "d": "defenders",
     "defenders": "defenders",
     "defender": "defenders",
     "def": "defenders",
     "difensori": "defenders",
     "difensore": "defenders",
+    "c": "midfielders",
     "midfielders": "midfielders",
     "midfielder": "midfielders",
     "mid": "midfielders",
     "centrocampisti": "midfielders",
     "centrocampista": "midfielders",
+    "a": "forwards",
     "forwards": "forwards",
     "forward": "forwards",
     "att": "forwards",
@@ -59,10 +66,22 @@ _ROLE_ALIASES = {
     "attaccante": "forwards",
 }
 
+_CSV_HEADERS = ("Squadra", "Calciatore", "Ruolo", "Prezzo")
+_CSV_ROLE_CODES = {
+    "goalkeepers": "P",
+    "defenders": "D",
+    "midfielders": "C",
+    "forwards": "A",
+}
+
 _SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _SHARE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
 _INTEGER_PATTERN = re.compile(r"^[0-9]+$")
 _STORE_LOCK = RLock()
+_INTERACTIVE_COUNTDOWN_MIN_SECONDS = 5
+_INTERACTIVE_COUNTDOWN_MAX_SECONDS = 300
+_INTERACTIVE_PRESENCE_TIMEOUT_SECONDS = 15
+_INTERACTIVE_PRESENCE_WRITE_INTERVAL_SECONDS = 5
 
 
 class AuctionError(ValueError):
@@ -91,6 +110,12 @@ class AuctionAuthorizationError(AuctionError):
     """Raised when a non-owner tries to change an auction."""
 
     status_code = 403
+
+
+class InteractiveAuctionError(AuctionError):
+    """Raised when the live auction state does not allow an action."""
+
+    status_code = 409
 
 
 def _utc_now() -> str:
@@ -486,6 +511,124 @@ def create_auction(
     return validate_auction(auction)
 
 
+def _parse_utc_timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as error:
+        raise AuctionError("Invalid live auction timestamp.") from error
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _seconds_until(value: str) -> int:
+    return max(0, int((_parse_utc_timestamp(value) - datetime.now(timezone.utc)).total_seconds()))
+
+
+def _is_interactive_participant_online(last_seen_at: Any) -> bool:
+    """Return whether a claimed participant has checked in recently."""
+
+    if not isinstance(last_seen_at, str):
+        return False
+    try:
+        elapsed_seconds = (datetime.now(timezone.utc) - _parse_utc_timestamp(last_seen_at)).total_seconds()
+    except AuctionError:
+        return False
+    return elapsed_seconds <= _INTERACTIVE_PRESENCE_TIMEOUT_SECONDS
+
+
+def _normalise_interactive_state(
+    value: Any,
+    participants: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Validate the persisted state used by the shared live auction."""
+
+    if value is None:
+        return None
+    raw = _as_mapping(value, "interactive auction")
+    participant_ids = [str(participant["id"]) for participant in participants]
+    participant_id_set = set(participant_ids)
+    enabled = raw.get("enabled")
+    if enabled is not True:
+        raise AuctionImportError("Interactive auction must be enabled.")
+    countdown_seconds = _normalise_integer(
+        raw.get("countdown_seconds"),
+        "Interactive countdown",
+        _INTERACTIVE_COUNTDOWN_MIN_SECONDS,
+    )
+    if countdown_seconds > _INTERACTIVE_COUNTDOWN_MAX_SECONDS:
+        raise AuctionImportError("Interactive countdown is too long.")
+
+    supplied_order = _as_list(raw.get("turn_order"), "Interactive turn order")
+    turn_order = [_normalise_id(item, "Turn participant") for item in supplied_order]
+    if set(turn_order) != participant_id_set or len(turn_order) != len(participant_ids):
+        raise AuctionImportError("Interactive turn order must include every participant once.")
+    turn_index = _normalise_integer(raw.get("turn_index", 0), "Turn index")
+    if turn_index >= len(turn_order):
+        raise AuctionImportError("Interactive turn index is invalid.")
+
+    raw_claims = _as_mapping(raw.get("claims", {}), "Team claims")
+    claims: dict[str, int] = {}
+    claimed_users: set[int] = set()
+    for participant_id, user_id in raw_claims.items():
+        normalised_participant_id = _normalise_id(participant_id, "Claimed participant")
+        if normalised_participant_id not in participant_id_set:
+            raise AuctionImportError("A team claim references an unknown participant.")
+        normalised_user_id = _normalise_owner_user_id(user_id)
+        if normalised_user_id in claimed_users:
+            raise AuctionImportError("A user can claim only one team.")
+        claims[normalised_participant_id] = normalised_user_id
+        claimed_users.add(normalised_user_id)
+
+    raw_presence = _as_mapping(raw.get("presence", {}), "Team presence")
+    presence: dict[str, str] = {}
+    for participant_id, last_seen_at in raw_presence.items():
+        normalised_participant_id = _normalise_id(participant_id, "Presence participant")
+        if normalised_participant_id not in claims:
+            raise AuctionImportError("Presence references a team that has not been claimed.")
+        normalised_last_seen_at = _normalise_timestamp(last_seen_at, "")
+        _parse_utc_timestamp(normalised_last_seen_at)
+        presence[normalised_participant_id] = normalised_last_seen_at
+
+    paused = raw.get("paused", False)
+    if not isinstance(paused, bool):
+        raise AuctionImportError("Interactive pause state is invalid.")
+    current_call: dict[str, Any] | None = None
+    supplied_call = raw.get("current_call")
+    if supplied_call is not None:
+        call = _as_mapping(supplied_call, "Current call")
+        caller_id = _normalise_id(call.get("caller_participant_id"), "Caller participant")
+        bidder_id = _normalise_id(call.get("bidder_participant_id"), "Bidder participant")
+        if caller_id not in participant_id_set or bidder_id not in participant_id_set:
+            raise AuctionImportError("Current call references an unknown participant.")
+        expires_at = _normalise_timestamp(call.get("expires_at"), "")
+        _parse_utc_timestamp(expires_at)
+        current_call = {
+            "player_name": _normalise_text(call.get("player_name"), "Called player", 120),
+            "caller_participant_id": caller_id,
+            "bidder_participant_id": bidder_id,
+            "price": _normalise_integer(call.get("price"), "Current bid", 1),
+            "expires_at": expires_at,
+        }
+
+    state = {
+        "enabled": True,
+        "countdown_seconds": countdown_seconds,
+        "paused": paused,
+        "turn_order": turn_order,
+        "turn_index": turn_index,
+        "claims": claims,
+        "presence": presence,
+        "current_call": current_call,
+    }
+    if paused and current_call is not None:
+        state["paused_remaining_seconds"] = _normalise_integer(
+            raw.get("paused_remaining_seconds", 0),
+            "Paused countdown",
+        )
+    return state
+
+
 def validate_auction(value: Any) -> dict[str, Any]:
     """Return a canonical auction after checking its complete JSON model.
 
@@ -507,6 +650,7 @@ def validate_auction(value: Any) -> dict[str, Any]:
         updated_at = _normalise_timestamp(raw_auction.get("updated_at"), created_at)
         participants = _normalise_stored_participants(raw_auction.get("participants"))
         sales = _replay_sales(participants, raw_auction.get("sales", []))
+        interactive = _normalise_interactive_state(raw_auction.get("interactive"), participants)
         supplied_owner = raw_auction.get("owner_user_id")
         owner_user_id = (
             _normalise_owner_user_id(supplied_owner)
@@ -537,6 +681,8 @@ def validate_auction(value: Any) -> dict[str, Any]:
     if owner_user_id is not None:
         canonical_auction["owner_user_id"] = owner_user_id
         canonical_auction["share_token"] = share_token
+    if interactive is not None:
+        canonical_auction["interactive"] = interactive
     return canonical_auction
 
 
@@ -564,6 +710,111 @@ def import_auction(value: Any) -> dict[str, Any]:
     return validate_auction(raw_auction)
 
 
+def import_auction_csv(value: str | bytes) -> dict[str, Any]:
+    """Build a completed auction snapshot from the flat CSV exchange format.
+
+    CSV intentionally contains only the roster history. As it has no budget or
+    slot configuration, each team's credits and role limits are reconstructed
+    from the listed purchases; the resulting imported snapshot is complete.
+    """
+
+    if isinstance(value, bytes):
+        try:
+            document = value.decode("utf-8-sig")
+        except UnicodeDecodeError as error:
+            raise AuctionImportError("Il CSV deve essere codificato in UTF-8.") from error
+    elif isinstance(value, str):
+        document = value.lstrip("\ufeff")
+    else:
+        raise AuctionImportError("Il documento CSV non è valido.")
+
+    try:
+        reader = csv.DictReader(io.StringIO(document, newline=""))
+    except csv.Error as error:
+        raise AuctionImportError("Il file CSV non è valido.") from error
+
+    supplied_headers = tuple((header or "").strip() for header in reader.fieldnames or ())
+    if supplied_headers != _CSV_HEADERS:
+        raise AuctionImportError(
+            "Il CSV deve avere le colonne: Squadra, Calciatore, Ruolo, Prezzo."
+        )
+
+    teams: dict[str, dict[str, Any]] = {}
+    imported_rows: list[dict[str, Any]] = []
+    try:
+        for line_number, row in enumerate(reader, start=2):
+            if row is None or not any((value or "").strip() for value in row.values()):
+                continue
+            team_name = _normalise_text(row.get("Squadra"), f"Squadra alla riga {line_number}", 60)
+            player_name = _normalise_text(row.get("Calciatore"), f"Calciatore alla riga {line_number}", 120)
+            role = canonical_role(row.get("Ruolo"))
+            price = _normalise_integer(row.get("Prezzo"), f"Prezzo alla riga {line_number}", 1)
+            team_key = team_name.casefold()
+            team = teams.setdefault(
+                team_key,
+                {
+                    "id": _new_id(),
+                    "name": team_name,
+                    "spent": 0,
+                    "role_limits": {role_key: 0 for role_key in ROLE_ORDER},
+                },
+            )
+            team["spent"] += price
+            team["role_limits"][role] += 1
+            imported_rows.append(
+                {
+                    "id": _new_id(),
+                    "player_name": player_name,
+                    "price": price,
+                    "participant_id": team["id"],
+                    "role": role,
+                    "created_at": _utc_now(),
+                }
+            )
+    except (AuctionError, csv.Error) as error:
+        raise AuctionImportError(str(error)) from error
+
+    if not imported_rows:
+        raise AuctionImportError("Il CSV non contiene alcun calciatore da importare.")
+
+    now = _utc_now()
+    return validate_auction(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "id": _new_id(),
+            "created_at": now,
+            "updated_at": now,
+            "participants": [
+                {
+                    "id": team["id"],
+                    "name": team["name"],
+                    "initial_credits": team["spent"],
+                    "role_limits": team["role_limits"],
+                }
+                for team in teams.values()
+            ],
+            "sales": imported_rows,
+        }
+    )
+
+
+def import_auction_document(value: Any) -> dict[str, Any]:
+    """Import the JSON backup or the flat CSV roster format transparently."""
+
+    if isinstance(value, Mapping):
+        return import_auction(value)
+    if isinstance(value, bytes):
+        try:
+            stripped = value.decode("utf-8-sig").lstrip()
+        except UnicodeDecodeError as error:
+            raise AuctionImportError("Il file da importare deve essere codificato in UTF-8.") from error
+    elif isinstance(value, str):
+        stripped = value.lstrip("\ufeff \t\r\n")
+    else:
+        raise AuctionImportError("Il file da importare non è valido.")
+    return import_auction(stripped) if stripped.startswith(("{", "[")) else import_auction_csv(value)
+
+
 def export_auction(auction: Any, *, indent: int | None = 2) -> str:
     """Serialize a validated auction in the portable JSON export format."""
 
@@ -572,6 +823,32 @@ def export_auction(auction: Any, *, indent: int | None = 2) -> str:
         ensure_ascii=False,
         indent=indent,
     )
+
+
+def export_auction_csv(auction: Any) -> str:
+    """Serialize sales in the compact CSV format used by roster tools."""
+
+    canonical_auction = validate_auction(auction)
+    participant_by_id = {
+        participant["id"]: participant["name"]
+        for participant in canonical_auction["participants"]
+    }
+    document = io.StringIO(newline="")
+    writer = csv.writer(document)
+    writer.writerow(_CSV_HEADERS)
+    for participant in canonical_auction["participants"]:
+        for sale in canonical_auction["sales"]:
+            if sale["participant_id"] != participant["id"]:
+                continue
+            writer.writerow(
+                (
+                    participant_by_id[sale["participant_id"]],
+                    sale["player_name"],
+                    _CSV_ROLE_CODES[sale["role"]],
+                    sale["price"],
+                )
+            )
+    return document.getvalue()
 
 
 def _sale_index(sales: Sequence[Mapping[str, Any]], sale_id: Any) -> int:
@@ -657,6 +934,343 @@ def delete_sale(auction: Any, sale_id: Any) -> dict[str, Any]:
         raise AuctionError(str(error)) from error
 
 
+def _interactive_state(auction: Mapping[str, Any]) -> dict[str, Any]:
+    state = auction.get("interactive")
+    if not isinstance(state, dict) or not state.get("enabled"):
+        raise InteractiveAuctionError("La modalità asta interattiva non è attiva.")
+    return state
+
+
+def _participant_ids(auction: Mapping[str, Any]) -> set[str]:
+    return {str(participant["id"]) for participant in auction["participants"]}
+
+
+def _ensure_not_paused(interactive: Mapping[str, Any]) -> None:
+    if interactive.get("paused"):
+        raise InteractiveAuctionError("L'asta è in pausa.")
+
+
+def _ensure_current_call_open(interactive: Mapping[str, Any]) -> Mapping[str, Any]:
+    call = interactive.get("current_call")
+    if not isinstance(call, Mapping):
+        raise InteractiveAuctionError("Nessun giocatore è in chiamata.")
+    if _seconds_until(str(call["expires_at"])) <= 0:
+        raise InteractiveAuctionError("Il countdown è scaduto: l'amministratore deve confermare o ribattere il giocatore.")
+    return call
+
+
+def _claimed_participant_for_user(interactive: Mapping[str, Any], user_id: int) -> str:
+    for participant_id, claimed_user_id in interactive["claims"].items():
+        if claimed_user_id == user_id:
+            return str(participant_id)
+    raise AuctionAuthorizationError("Scegli prima la tua squadra per partecipare all'asta.")
+
+
+def refresh_interactive_presence(auction: Any, user_id: int) -> tuple[dict[str, Any], bool]:
+    """Record a periodic check-in for the viewer's claimed team.
+
+    The write is throttled because every live-auction page polls once per
+    second. A short timeout still makes disconnected participants visible in
+    near real time without constantly writing the auction document.
+    """
+
+    canonical_auction = validate_auction(auction)
+    interactive = canonical_auction.get("interactive")
+    if not isinstance(interactive, Mapping) or not interactive.get("enabled"):
+        return canonical_auction, False
+
+    participant_id = next(
+        (
+            claimed_participant_id
+            for claimed_participant_id, claimed_user_id in interactive["claims"].items()
+            if claimed_user_id == user_id
+        ),
+        None,
+    )
+    if participant_id is None:
+        return canonical_auction, False
+
+    last_seen_at = interactive["presence"].get(participant_id)
+    if isinstance(last_seen_at, str):
+        elapsed_seconds = (datetime.now(timezone.utc) - _parse_utc_timestamp(last_seen_at)).total_seconds()
+        if elapsed_seconds < _INTERACTIVE_PRESENCE_WRITE_INTERVAL_SECONDS:
+            return canonical_auction, False
+
+    candidate = copy.deepcopy(canonical_auction)
+    now = _utc_now()
+    candidate["interactive"]["presence"][participant_id] = now
+    candidate["updated_at"] = now
+    return validate_auction(candidate), True
+
+
+def _interactive_role_progress(
+    auction: Mapping[str, Any],
+) -> tuple[str | None, dict[str, dict[str, int]], dict[str, Mapping[str, Any]]]:
+    """Return the active role and each team's filled slots for that role."""
+
+    participants = auction["participants"]
+    role_counts = _empty_role_counts(participants)
+    for sale in auction["sales"]:
+        role_counts[sale["participant_id"]][sale["role"]] += 1
+    return (
+        _current_role_from_counts(participants, role_counts),
+        role_counts,
+        {participant["id"]: participant for participant in participants},
+    )
+
+
+def _participant_can_call_current_role(
+    auction: Mapping[str, Any],
+    participant_id: str,
+) -> bool:
+    current_role, role_counts, participants_by_id = _interactive_role_progress(auction)
+    if current_role is None or participant_id not in participants_by_id:
+        return False
+    return role_counts[participant_id][current_role] < participants_by_id[participant_id]["role_limits"][current_role]
+
+
+def _move_turn_to_next_available_participant(
+    auction: Mapping[str, Any],
+    start_index: int,
+) -> bool:
+    """Move the turn to the next team that still needs the current role."""
+
+    interactive = _interactive_state(auction)
+    current_role, role_counts, participants_by_id = _interactive_role_progress(auction)
+    if current_role is None:
+        return False
+    turn_order = interactive["turn_order"]
+    for offset in range(len(turn_order)):
+        candidate_index = (start_index + offset) % len(turn_order)
+        participant_id = turn_order[candidate_index]
+        if role_counts[participant_id][current_role] < participants_by_id[participant_id]["role_limits"][current_role]:
+            interactive["turn_index"] = candidate_index
+            return True
+    return False
+
+
+def skip_completed_interactive_turns(auction: Any) -> tuple[dict[str, Any], bool]:
+    """Repair a no-call turn if its team has already filled the active role."""
+
+    canonical_auction = validate_auction(auction)
+    interactive = canonical_auction.get("interactive")
+    if not isinstance(interactive, Mapping) or not interactive.get("enabled") or interactive.get("current_call") is not None:
+        return canonical_auction, False
+    current_participant_id = interactive["turn_order"][interactive["turn_index"]]
+    if _participant_can_call_current_role(canonical_auction, current_participant_id):
+        return canonical_auction, False
+
+    candidate = copy.deepcopy(canonical_auction)
+    if not _move_turn_to_next_available_participant(candidate, candidate["interactive"]["turn_index"] + 1):
+        return canonical_auction, False
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate), True
+
+
+def enable_interactive_auction(auction: Any, countdown_seconds: Any) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    if canonical_auction.get("interactive", {}).get("enabled"):
+        raise InteractiveAuctionError("La modalità interattiva è già attiva.")
+    candidate = copy.deepcopy(canonical_auction)
+    candidate["interactive"] = {
+        "enabled": True,
+        "countdown_seconds": _normalise_integer(
+            countdown_seconds,
+            "Countdown",
+            _INTERACTIVE_COUNTDOWN_MIN_SECONDS,
+        ),
+        "paused": False,
+        "turn_order": [participant["id"] for participant in candidate["participants"]],
+        "turn_index": 0,
+        "claims": {},
+        "presence": {},
+        "current_call": None,
+    }
+    if candidate["interactive"]["countdown_seconds"] > _INTERACTIVE_COUNTDOWN_MAX_SECONDS:
+        raise AuctionError("Il countdown non può superare 300 secondi.")
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def claim_interactive_team(auction: Any, user_id: int, participant_id: Any) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    _ensure_not_paused(interactive)
+    team_id = _normalise_id(participant_id, "Team")
+    if team_id not in _participant_ids(candidate):
+        raise AuctionError("La squadra selezionata non esiste.")
+    current_owner = interactive["claims"].get(team_id)
+    if current_owner is not None and current_owner != user_id:
+        raise AuctionAuthorizationError("Questa squadra è già stata scelta da un altro utente.")
+    for claimed_team_id, claimed_user_id in list(interactive["claims"].items()):
+        if claimed_user_id == user_id and claimed_team_id != team_id:
+            del interactive["claims"][claimed_team_id]
+            interactive["presence"].pop(claimed_team_id, None)
+    interactive["claims"][team_id] = user_id
+    interactive["presence"][team_id] = _utc_now()
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def call_interactive_player(auction: Any, user_id: int, player_name: Any) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    _ensure_not_paused(interactive)
+    if interactive["current_call"] is not None:
+        raise InteractiveAuctionError("C'è già un giocatore in chiamata.")
+    caller_id = _claimed_participant_for_user(interactive, user_id)
+    if caller_id != interactive["turn_order"][interactive["turn_index"]]:
+        raise AuctionAuthorizationError("Non è il turno della tua squadra per chiamare un giocatore.")
+    if not _participant_can_call_current_role(candidate, caller_id):
+        raise InteractiveAuctionError("La tua squadra ha già completato gli slot del ruolo corrente.")
+    normalised_name = _normalise_text(player_name, "Player name", 120)
+    if any(sale["player_name"].casefold() == normalised_name.casefold() for sale in candidate["sales"]):
+        raise AuctionError("Questo giocatore è già stato assegnato.")
+    interactive["current_call"] = {
+        "player_name": normalised_name,
+        "caller_participant_id": caller_id,
+        "bidder_participant_id": caller_id,
+        "price": 1,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=interactive["countdown_seconds"])).isoformat(),
+    }
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def bid_interactive_player(auction: Any, user_id: int, amount: Any) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    _ensure_not_paused(interactive)
+    call = _ensure_current_call_open(interactive)
+    bidder_id = _claimed_participant_for_user(interactive, user_id)
+    bid_amount = _normalise_integer(amount, "Bid", int(call["price"]) + 1)
+    if bid_amount <= int(call["price"]):
+        raise AuctionError("L'offerta deve superare il prezzo corrente.")
+    participant = next(item for item in candidate["participants"] if item["id"] == bidder_id)
+    spent = sum(
+        sale["price"] for sale in candidate["sales"] if sale["participant_id"] == bidder_id
+    )
+    if bid_amount > participant["initial_credits"] - spent:
+        raise AuctionError("Non hai crediti sufficienti per questa offerta.")
+    call["price"] = bid_amount
+    call["bidder_participant_id"] = bidder_id
+    call["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=interactive["countdown_seconds"])).isoformat()
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def set_interactive_pause(auction: Any, paused: bool) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    if interactive["paused"] == paused:
+        return canonical_auction
+    call = interactive.get("current_call")
+    if paused and isinstance(call, Mapping):
+        interactive["paused_remaining_seconds"] = _seconds_until(str(call["expires_at"]))
+    elif not paused and isinstance(call, Mapping):
+        call["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=interactive.pop("paused_remaining_seconds", 0))).isoformat()
+    interactive["paused"] = paused
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def set_interactive_countdown(auction: Any, countdown_seconds: Any) -> dict[str, Any]:
+    """Change the live timer and restart the current call from that value."""
+
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    seconds = _normalise_integer(
+        countdown_seconds,
+        "Countdown",
+        _INTERACTIVE_COUNTDOWN_MIN_SECONDS,
+    )
+    if seconds > _INTERACTIVE_COUNTDOWN_MAX_SECONDS:
+        raise AuctionError("Il countdown non può superare 300 secondi.")
+    interactive["countdown_seconds"] = seconds
+    call = interactive.get("current_call")
+    if isinstance(call, Mapping):
+        if interactive["paused"]:
+            interactive["paused_remaining_seconds"] = seconds
+        else:
+            call["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def set_interactive_turn(auction: Any, participant_id: Any) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    if interactive["current_call"] is not None:
+        raise InteractiveAuctionError("Concludi prima la chiamata corrente.")
+    target_id = _normalise_id(participant_id, "Turn participant")
+    try:
+        interactive["turn_index"] = interactive["turn_order"].index(target_id)
+    except ValueError as error:
+        raise AuctionError("La squadra selezionata non fa parte dell'ordine dei turni.") from error
+    if not _participant_can_call_current_role(candidate, target_id):
+        raise AuctionError("Questa squadra ha già completato gli slot del ruolo corrente.")
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def shuffle_interactive_turn(auction: Any) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    if interactive["current_call"] is not None:
+        raise InteractiveAuctionError("Concludi prima la chiamata corrente.")
+    random.SystemRandom().shuffle(interactive["turn_order"])
+    _move_turn_to_next_available_participant(candidate, 0)
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def advance_interactive_turn(auction: Any) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    if interactive["current_call"] is not None:
+        raise InteractiveAuctionError("Concludi prima la chiamata corrente.")
+    _move_turn_to_next_available_participant(candidate, interactive["turn_index"] + 1)
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
+def resolve_interactive_call(auction: Any, confirm: bool) -> dict[str, Any]:
+    canonical_auction = validate_auction(auction)
+    candidate = copy.deepcopy(canonical_auction)
+    interactive = _interactive_state(candidate)
+    if interactive["paused"]:
+        raise InteractiveAuctionError("Riprendi l'asta prima di confermare una chiamata.")
+    call = interactive.get("current_call")
+    if not isinstance(call, Mapping):
+        raise InteractiveAuctionError("Nessun giocatore è in chiamata.")
+    if _seconds_until(str(call["expires_at"])) > 0:
+        raise InteractiveAuctionError("Il countdown non è ancora scaduto.")
+    if confirm:
+        candidate = add_sale(
+            candidate,
+            call["player_name"],
+            call["price"],
+            call["bidder_participant_id"],
+        )
+        interactive = _interactive_state(candidate)
+        interactive["current_call"] = None
+        _move_turn_to_next_available_participant(candidate, interactive["turn_index"] + 1)
+    else:
+        call["price"] = 1
+        call["bidder_participant_id"] = call["caller_participant_id"]
+        call["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=interactive["countdown_seconds"])).isoformat()
+    candidate["updated_at"] = _utc_now()
+    return validate_auction(candidate)
+
+
 def _public_sale(sale: Mapping[str, Any], participant_name: str) -> dict[str, Any]:
     """Add display-friendly aliases without mutating the persisted model."""
 
@@ -673,7 +1287,7 @@ def _public_sale(sale: Mapping[str, Any], participant_name: str) -> dict[str, An
     }
 
 
-def auction_state(auction: Any) -> dict[str, Any]:
+def auction_state(auction: Any, *, viewer_user_id: int | None = None) -> dict[str, Any]:
     """Return the frontend-oriented view of an auction.
 
     Persisted sales are chronological; the `sales` array returned here is
@@ -700,6 +1314,9 @@ def auction_state(auction: Any) -> dict[str, Any]:
         rosters[participant_id][sale["role"]].append(public_sale)
         public_sales.append(public_sale)
 
+    interactive = canonical_auction.get("interactive")
+    claims = interactive["claims"] if isinstance(interactive, Mapping) else {}
+    presence = interactive["presence"] if isinstance(interactive, Mapping) else {}
     public_participants = []
     for participant in participants:
         participant_id = participant["id"]
@@ -713,6 +1330,15 @@ def auction_state(auction: Any) -> dict[str, Any]:
                 - spent_credits[participant_id],
                 "role_limits": copy.deepcopy(participant["role_limits"]),
                 "roster": rosters[participant_id],
+                "claimed": participant_id in claims,
+                "claimed_by_me": claims.get(participant_id) == viewer_user_id,
+                "connection_status": (
+                    "unclaimed"
+                    if participant_id not in claims
+                    else "online"
+                    if _is_interactive_participant_online(presence.get(participant_id))
+                    else "offline"
+                ),
             }
         )
 
@@ -741,7 +1367,7 @@ def auction_state(auction: Any) -> dict[str, Any]:
         for role in ROLE_ORDER
     }
 
-    return {
+    state = {
         "id": canonical_auction["id"],
         "schema_version": SCHEMA_VERSION,
         "created_at": canonical_auction["created_at"],
@@ -755,6 +1381,46 @@ def auction_state(auction: Any) -> dict[str, Any]:
         "role_labels": copy.deepcopy(ROLE_LABELS),
         "progress": progress,
     }
+    if isinstance(interactive, Mapping):
+        participant_names = {participant["id"]: participant["name"] for participant in participants}
+        completed_turn_participant_ids = [
+            participant_id
+            for participant_id in interactive["turn_order"]
+            if current_role is None
+            or role_counts[participant_id][current_role]
+            >= participant_by_id[participant_id]["role_limits"][current_role]
+        ]
+        call = interactive.get("current_call")
+        public_call = None
+        if isinstance(call, Mapping):
+            public_call = {
+                "player_name": call["player_name"],
+                "caller_participant_id": call["caller_participant_id"],
+                "caller_name": participant_names[call["caller_participant_id"]],
+                "bidder_participant_id": call["bidder_participant_id"],
+                "bidder_name": participant_names[call["bidder_participant_id"]],
+                "price": call["price"],
+                "expires_at": call["expires_at"],
+                "expired": not interactive["paused"] and _seconds_until(call["expires_at"]) <= 0,
+            }
+        viewer_participant_id = next(
+            (participant_id for participant_id, user_id in claims.items() if user_id == viewer_user_id),
+            None,
+        )
+        state["interactive"] = {
+            "enabled": True,
+            "paused": interactive["paused"],
+            "countdown_seconds": interactive["countdown_seconds"],
+            "turn_participant_id": interactive["turn_order"][interactive["turn_index"]],
+            "turn_participant_name": participant_names[interactive["turn_order"][interactive["turn_index"]]],
+            "turn_order": interactive["turn_order"],
+            "completed_turn_participant_ids": completed_turn_participant_ids,
+            "viewer_participant_id": viewer_participant_id,
+            "current_call": public_call,
+        }
+    else:
+        state["interactive"] = {"enabled": False}
+    return state
 
 
 class JsonAuctionStore:
@@ -834,7 +1500,12 @@ class AuctionRepository:
             raise AuctionNotFoundError("The shared auction could not be found.")
 
         for path in self.directory.glob("*.json"):
-            auction = JsonAuctionStore(path).load()
+            try:
+                auction = JsonAuctionStore(path).load()
+            except AuctionStorageError:
+                # A legacy file can have been created by an older container
+                # user. It must not make every other shared auction fail.
+                continue
             if secrets.compare_digest(str(auction.get("share_token") or ""), token):
                 return auction
         raise AuctionNotFoundError("The shared auction could not be found.")
@@ -948,7 +1619,7 @@ def _request_object() -> Mapping[str, Any]:
 
 
 def _request_import_payload() -> Any:
-    """Accept a direct JSON export, an API wrapper, or a JSON upload field."""
+    """Accept an uploaded JSON/CSV file or a direct JSON export object."""
 
     uploaded_file = request.files.get("file")
     if uploaded_file is not None:
@@ -961,6 +1632,13 @@ def _request_import_payload() -> Any:
     if payload is None:
         raise AuctionImportError("Upload a JSON file or send a JSON auction object.")
     return payload
+
+
+def _requested_export_format() -> str:
+    export_format = str(request.args.get("format", "json")).strip().casefold()
+    if export_format not in {"json", "csv"}:
+        raise AuctionError("Il formato di esportazione deve essere JSON o CSV.")
+    return export_format
 
 
 def _create_from_request(payload: Mapping[str, Any], owner_user_id: int) -> dict[str, Any]:
@@ -983,8 +1661,8 @@ def _share_url(share_token: str) -> str:
     return url_for("bid_manager.shared_auction", share_token=share_token, _external=True)
 
 
-def _admin_auction_state(auction: Any) -> dict[str, Any]:
-    state = auction_state(auction)
+def _admin_auction_state(auction: Any, viewer_user_id: int) -> dict[str, Any]:
+    state = auction_state(auction, viewer_user_id=viewer_user_id)
     share_token = _normalise_share_token(validate_auction(auction)["share_token"])
     state["access"] = {
         "can_manage": True,
@@ -993,8 +1671,8 @@ def _admin_auction_state(auction: Any) -> dict[str, Any]:
     return state
 
 
-def _shared_auction_state(auction: Any) -> dict[str, Any]:
-    state = auction_state(auction)
+def _shared_auction_state(auction: Any, viewer_user_id: int) -> dict[str, Any]:
+    state = auction_state(auction, viewer_user_id=viewer_user_id)
     state["access"] = {"can_manage": False}
     return state
 
@@ -1025,21 +1703,174 @@ def get_auction():
     """Return the active auction, or `null` before one has been created."""
 
     repository = _repository_for_current_app()
+    user_id = _current_user_id()
     try:
         with _STORE_LOCK:
-            auction = load_owned_active_auction(session, repository, _current_user_id())
+            auction = load_owned_active_auction(session, repository, user_id)
+            auction, turn_changed = skip_completed_interactive_turns(auction)
+            auction, presence_changed = refresh_interactive_presence(auction, user_id)
+            if turn_changed or presence_changed:
+                auction = save_active_auction(session, repository, auction)
     except AuctionNotFoundError:
         return jsonify({"auction": None})
-    return jsonify({"auction": _admin_auction_state(auction)})
+    return jsonify({"auction": _admin_auction_state(auction, user_id)})
 
 
 @bid_bp.get("/api/auction/shared/<share_token>")
 def get_shared_auction(share_token: str):
     """Return a shared auction snapshot without granting write access."""
 
+    user_id = _current_user_id()
     with _STORE_LOCK:
-        auction = _repository_for_current_app().load_by_share_token(share_token)
-    return jsonify({"auction": _shared_auction_state(auction)})
+        repository = _repository_for_current_app()
+        auction = repository.load_by_share_token(share_token)
+        auction, turn_changed = skip_completed_interactive_turns(auction)
+        auction, presence_changed = refresh_interactive_presence(auction, user_id)
+        if turn_changed or presence_changed:
+            auction = repository.save(auction)
+    return jsonify({"auction": _shared_auction_state(auction, user_id)})
+
+
+def _save_interactive_owner_update(operation: Callable[[dict[str, Any], int], dict[str, Any]]):
+    user_id = _current_user_id()
+    with _STORE_LOCK:
+        repository = _repository_for_current_app()
+        auction = load_owned_active_auction(session, repository, user_id)
+        updated_auction = operation(auction, user_id)
+        updated_auction, _presence_changed = refresh_interactive_presence(updated_auction, user_id)
+        saved = save_active_auction(session, repository, updated_auction)
+    return jsonify({"auction": _admin_auction_state(saved, user_id)})
+
+
+def _save_interactive_shared_update(
+    share_token: str,
+    operation: Callable[[dict[str, Any], int], dict[str, Any]],
+):
+    user_id = _current_user_id()
+    with _STORE_LOCK:
+        repository = _repository_for_current_app()
+        auction = repository.load_by_share_token(share_token)
+        updated_auction = operation(auction, user_id)
+        updated_auction, _presence_changed = refresh_interactive_presence(updated_auction, user_id)
+        saved = repository.save(updated_auction)
+    return jsonify({"auction": _shared_auction_state(saved, user_id)})
+
+
+@bid_bp.post("/api/auction/interactive/start")
+def start_interactive_auction_endpoint():
+    payload = _request_object()
+    return _save_interactive_owner_update(
+        lambda auction, _user_id: enable_interactive_auction(auction, payload.get("countdown_seconds"))
+    )
+
+
+@bid_bp.post("/api/auction/interactive/pause")
+def pause_interactive_auction_endpoint():
+    payload = _request_object()
+    paused = payload.get("paused")
+    if not isinstance(paused, bool):
+        raise AuctionError("Il valore pausa deve essere vero o falso.")
+    return _save_interactive_owner_update(
+        lambda auction, _user_id: set_interactive_pause(auction, paused)
+    )
+
+
+@bid_bp.post("/api/auction/interactive/countdown")
+def set_interactive_countdown_endpoint():
+    payload = _request_object()
+    return _save_interactive_owner_update(
+        lambda auction, _user_id: set_interactive_countdown(auction, payload.get("countdown_seconds"))
+    )
+
+
+@bid_bp.post("/api/auction/interactive/turn")
+def set_interactive_turn_endpoint():
+    payload = _request_object()
+    return _save_interactive_owner_update(
+        lambda auction, _user_id: set_interactive_turn(auction, payload.get("participant_id"))
+    )
+
+
+@bid_bp.post("/api/auction/interactive/turn/shuffle")
+def shuffle_interactive_turn_endpoint():
+    return _save_interactive_owner_update(lambda auction, _user_id: shuffle_interactive_turn(auction))
+
+
+@bid_bp.post("/api/auction/interactive/turn/advance")
+def advance_interactive_turn_endpoint():
+    return _save_interactive_owner_update(lambda auction, _user_id: advance_interactive_turn(auction))
+
+
+@bid_bp.post("/api/auction/interactive/resolve")
+def resolve_interactive_call_endpoint():
+    payload = _request_object()
+    confirm = payload.get("confirm")
+    if not isinstance(confirm, bool):
+        raise AuctionError("Specifica se confermare la battuta.")
+    return _save_interactive_owner_update(
+        lambda auction, _user_id: resolve_interactive_call(auction, confirm)
+    )
+
+
+def _interactive_participant_operation(operation: Callable[[dict[str, Any], int, Mapping[str, Any]], dict[str, Any]]):
+    payload = _request_object()
+    return _save_interactive_owner_update(lambda auction, user_id: operation(auction, user_id, payload))
+
+
+@bid_bp.post("/api/auction/interactive/claim")
+def claim_interactive_team_endpoint():
+    return _interactive_participant_operation(
+        lambda auction, user_id, payload: claim_interactive_team(auction, user_id, payload.get("participant_id"))
+    )
+
+
+@bid_bp.post("/api/auction/interactive/call")
+def call_interactive_player_endpoint():
+    return _interactive_participant_operation(
+        lambda auction, user_id, payload: call_interactive_player(auction, user_id, payload.get("player_name"))
+    )
+
+
+@bid_bp.post("/api/auction/interactive/bid")
+def bid_interactive_player_endpoint():
+    return _interactive_participant_operation(
+        lambda auction, user_id, payload: bid_interactive_player(auction, user_id, payload.get("amount"))
+    )
+
+
+def _shared_interactive_participant_operation(
+    share_token: str,
+    operation: Callable[[dict[str, Any], int, Mapping[str, Any]], dict[str, Any]],
+):
+    payload = _request_object()
+    return _save_interactive_shared_update(
+        share_token,
+        lambda auction, user_id: operation(auction, user_id, payload),
+    )
+
+
+@bid_bp.post("/api/auction/shared/<share_token>/interactive/claim")
+def shared_claim_interactive_team_endpoint(share_token: str):
+    return _shared_interactive_participant_operation(
+        share_token,
+        lambda auction, user_id, payload: claim_interactive_team(auction, user_id, payload.get("participant_id")),
+    )
+
+
+@bid_bp.post("/api/auction/shared/<share_token>/interactive/call")
+def shared_call_interactive_player_endpoint(share_token: str):
+    return _shared_interactive_participant_operation(
+        share_token,
+        lambda auction, user_id, payload: call_interactive_player(auction, user_id, payload.get("player_name")),
+    )
+
+
+@bid_bp.post("/api/auction/shared/<share_token>/interactive/bid")
+def shared_bid_interactive_player_endpoint(share_token: str):
+    return _shared_interactive_participant_operation(
+        share_token,
+        lambda auction, user_id, payload: bid_interactive_player(auction, user_id, payload.get("amount")),
+    )
 
 
 @bid_bp.post("/api/auction/session/close")
@@ -1056,22 +1887,24 @@ def create_auction_endpoint():
     """Start a new auction and make it the current session's active auction."""
 
     payload = _request_object()
-    auction = _create_from_request(payload, _current_user_id())
+    user_id = _current_user_id()
+    auction = _create_from_request(payload, user_id)
     with _STORE_LOCK:
         saved_auction = save_active_auction(session, _repository_for_current_app(), auction)
-    return jsonify({"auction": _admin_auction_state(saved_auction)}), 201
+    return jsonify({"auction": _admin_auction_state(saved_auction, user_id)}), 201
 
 
 @bid_bp.post("/api/auction/import")
 def import_auction_endpoint():
     """Restore a user-exported auction as a new local saved auction."""
 
-    imported_auction = import_auction(_request_import_payload())
+    imported_auction = import_auction_document(_request_import_payload())
     # Treat every import as a new local copy.  This avoids one browser session
     # silently overwriting another session's file with the same exported ID.
     imported_auction["id"] = _new_id()
     imported_auction["updated_at"] = _utc_now()
-    imported_auction["owner_user_id"] = _current_user_id()
+    user_id = _current_user_id()
+    imported_auction["owner_user_id"] = user_id
     imported_auction["share_token"] = _new_share_token()
     with _STORE_LOCK:
         saved_auction = save_active_auction(
@@ -1079,12 +1912,12 @@ def import_auction_endpoint():
             _repository_for_current_app(),
             imported_auction,
         )
-    return jsonify({"auction": _admin_auction_state(saved_auction)}), 201
+    return jsonify({"auction": _admin_auction_state(saved_auction, user_id)}), 201
 
 
 @bid_bp.get("/api/auction/export")
 def export_auction_endpoint():
-    """Download the active auction in the portable JSON format."""
+    """Download the active auction as a portable JSON backup or roster CSV."""
 
     with _STORE_LOCK:
         auction = load_owned_active_auction(
@@ -1092,6 +1925,16 @@ def export_auction_endpoint():
             _repository_for_current_app(),
             _current_user_id(),
         )
+    export_format = _requested_export_format()
+    if export_format == "csv":
+        return Response(
+            export_auction_csv(auction),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=fantasta-asta.csv",
+            },
+        )
+
     document = export_auction(auction)
     return Response(
         document,
@@ -1111,12 +1954,13 @@ def add_player_endpoint():
     price = payload.get("price")
     participant_id = _read_first(payload, "participant_id", "buyer_id")
 
+    user_id = _current_user_id()
     with _STORE_LOCK:
         repository = _repository_for_current_app()
-        auction = load_owned_active_auction(session, repository, _current_user_id())
+        auction = load_owned_active_auction(session, repository, user_id)
         updated_auction = add_sale(auction, player_name, price, participant_id)
         saved_auction = save_active_auction(session, repository, updated_auction)
-    return jsonify({"auction": _admin_auction_state(saved_auction)}), 201
+    return jsonify({"auction": _admin_auction_state(saved_auction, user_id)}), 201
 
 
 @bid_bp.patch("/api/auction/players/<sale_id>")
@@ -1133,9 +1977,10 @@ def edit_player_endpoint(sale_id: str):
         if "participant_id" in payload or "buyer_id" in payload
         else None
     )
+    user_id = _current_user_id()
     with _STORE_LOCK:
         repository = _repository_for_current_app()
-        auction = load_owned_active_auction(session, repository, _current_user_id())
+        auction = load_owned_active_auction(session, repository, user_id)
         updated_auction = edit_sale(
             auction,
             sale_id,
@@ -1143,16 +1988,17 @@ def edit_player_endpoint(sale_id: str):
             participant_id=participant_id,
         )
         saved_auction = save_active_auction(session, repository, updated_auction)
-    return jsonify({"auction": _admin_auction_state(saved_auction)})
+    return jsonify({"auction": _admin_auction_state(saved_auction, user_id)})
 
 
 @bid_bp.delete("/api/auction/players/<sale_id>")
 def delete_player_endpoint(sale_id: str):
     """Remove an auction sale so the player can be auctioned again."""
 
+    user_id = _current_user_id()
     with _STORE_LOCK:
         repository = _repository_for_current_app()
-        auction = load_owned_active_auction(session, repository, _current_user_id())
+        auction = load_owned_active_auction(session, repository, user_id)
         updated_auction = delete_sale(auction, sale_id)
         saved_auction = save_active_auction(session, repository, updated_auction)
-    return jsonify({"auction": _admin_auction_state(saved_auction)})
+    return jsonify({"auction": _admin_auction_state(saved_auction, user_id)})

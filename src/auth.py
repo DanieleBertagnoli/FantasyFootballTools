@@ -50,6 +50,7 @@ from auth_mail import AuthMailError, send_password_reset_email, send_verificatio
 SESSION_USER_ID_KEY = "auth_user_id"
 SESSION_VERSION_KEY = "auth_session_version"
 CSRF_SESSION_KEY = "auth_csrf_token"
+PUBLIC_ENDPOINTS = {"healthz", "privacy_policy", "cookie_policy", "terms_of_service"}
 _EMAIL_PATTERN = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,253}$")
 _PASSWORD_MAX_LENGTH = 128
 _COMMON_PASSWORDS = {
@@ -134,6 +135,12 @@ def configure_auth(app: Flask) -> None:
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     if "SESSION_COOKIE_SECURE" in os.environ:
         app.config["SESSION_COOKIE_SECURE"] = _environment_flag("SESSION_COOKIE_SECURE", False)
+    else:
+        base_url = str(app.config.get("APP_BASE_URL") or "").casefold()
+        app.config["SESSION_COOKIE_SECURE"] = (
+            str(app.config.get("APP_ENV") or "").casefold() == "production"
+            and base_url.startswith("https://")
+        )
 
 
 def _positive_int_config(name: str, default: int) -> int:
@@ -331,11 +338,23 @@ def load_verified_user_and_protect_routes() -> Response | None:
 
     if not current_app.config.get("AUTH_REQUIRE_LOGIN", True):
         return None
-    if endpoint == "static" or endpoint.startswith("auth."):
+    if endpoint == "static" or endpoint.startswith("auth.") or endpoint in PUBLIC_ENDPOINTS:
         return None
     if _current_user() is not None:
         return None
     return _unauthenticated_response()
+
+
+@auth_bp.before_app_request
+def protect_api_mutations_with_csrf() -> None:
+    """Require the session-bound CSRF nonce for every state-changing API call."""
+
+    if not _is_api_request() or request.method in {"GET", "HEAD", "OPTIONS"}:
+        return
+    supplied = request.headers.get("X-CSRF-Token", "")
+    expected = session.get(CSRF_SESSION_KEY, "")
+    if not isinstance(supplied, str) or not isinstance(expected, str) or not hmac.compare_digest(supplied, expected):
+        raise AuthCsrfError("La sessione della richiesta non è valida. Aggiorna la pagina e riprova.")
 
 
 @auth_bp.route("/signup", methods=["GET", "POST"])
@@ -570,7 +589,9 @@ def init_auth(app: Flask) -> None:
         )
 
     @app.errorhandler(AuthCsrfError)
-    def handle_auth_csrf_error(error: AuthCsrfError) -> tuple[str, int]:
+    def handle_auth_csrf_error(error: AuthCsrfError) -> tuple[Response, int] | tuple[str, int]:
+        if _is_api_request():
+            return jsonify({"error": str(error)}), 400
         return (
             render_template(
                 "auth-message.html",

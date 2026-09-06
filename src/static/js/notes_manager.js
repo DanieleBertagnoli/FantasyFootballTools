@@ -116,11 +116,12 @@ function clearInternalNavigationFlag() {
 }
 
 function sendSessionCloseBeacon() {
-  if (navigator.sendBeacon) {
-    navigator.sendBeacon(API.closeSession);
-    return;
-  }
-  fetch(API.closeSession, { method: "POST", keepalive: true }).catch(() => {});
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+  fetch(API.closeSession, {
+    method: "POST",
+    keepalive: true,
+    headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+  }).catch(() => {});
 }
 
 function bindEvents() {
@@ -638,7 +639,12 @@ function renderTierOptions(select, selectedValue = "") {
 
 async function request(url, options = {}) {
   const headers = new Headers(options.headers || {});
+  const method = (options.method || "GET").toUpperCase();
   headers.set("Accept", "application/json");
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  }
   if (options.body) {
     headers.set("Content-Type", "application/json");
   }
@@ -662,7 +668,7 @@ async function request(url, options = {}) {
 }
 
 async function responseError(response) {
-  let message = "Si è verificato un errore durante l’operazione.";
+  let message = "Si è verificato un errore durante l'operazione.";
   try {
     const payload = await response.json();
     message = payload.error || payload.message || payload.detail || message;

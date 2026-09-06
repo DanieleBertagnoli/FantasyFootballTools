@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Gestisci in tempo reale crediti, rose e battute della tua asta di fantacalcio.">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>FantAsta | Bid Manager</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -54,10 +55,13 @@
     {% if not shared_auction|default(false) %}
     <div id="auctionUtilityActions" class="auction-utility-actions" hidden aria-label="Azioni dell'asta">
       <button class="button button-primary button-export" type="button" data-action="export-auction">
-        <span aria-hidden="true">⇩</span> Esporta JSON
+        <span aria-hidden="true">⇩</span> Esporta
       </button>
       <button class="button button-secondary button-share" type="button" data-action="share-auction" disabled hidden>
         <span aria-hidden="true">↗</span> Condividi
+      </button>
+      <button class="button button-secondary" type="button" data-action="start-interactive" hidden>
+        <span aria-hidden="true">◉</span> Attiva asta live
       </button>
     </div>
     {% endif %}
@@ -149,13 +153,12 @@
             <p class="section-kicker">Riprendi da dove eri</p>
             <h2 id="importAuctionTitle">Importa un'asta</h2>
             <p>
-              Carica il file JSON esportato in precedenza per ripristinare immediatamente lo stato
-              della tua lega.
+              Carica un backup JSON oppure un CSV con squadre, calciatori, ruoli e prezzi.
             </p>
-            <input id="importFile" type="file" accept="application/json,.json" hidden>
+            <input id="importFile" type="file" accept="application/json,text/csv,.json,.csv" hidden>
             <button class="import-dropzone" type="button" data-action="choose-import">
               <span aria-hidden="true">+</span>
-              <strong>Scegli un file JSON</strong>
+              <strong>Scegli un file</strong>
               <small>oppure trascinalo qui</small>
             </button>
           </section>
@@ -241,6 +244,20 @@
         </section>
         {% endif %}
 
+        <div id="interactivePauseBanner" class="interactive-pause-banner" hidden>ASTA IN PAUSA</div>
+        <section id="interactivePanel" class="sale-panel interactive-panel" hidden aria-live="polite">
+          <div class="interactive-live-header">
+            <div class="interactive-player-summary">
+              <h2 id="interactiveTitle">In attesa dell'asta live</h2>
+            </div>
+            <p id="interactivePrice" class="interactive-current-price"></p>
+            <span id="interactiveTimer" class="interactive-countdown" aria-label="Countdown offerta">--</span>
+          </div>
+          <form id="interactiveCallForm" class="sale-form" hidden><label class="field field-player player-search-field"><span>Giocatore da chiamare</span><div id="interactivePlayerAutocomplete" class="player-autocomplete"><input id="interactivePlayerName" maxlength="120" autocomplete="off" placeholder="Es. Lautaro Martínez" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="interactivePlayerSuggestions" aria-describedby="interactivePlayerSearchStatus" required><div id="interactivePlayerSuggestions" class="player-suggestions" role="listbox" hidden></div></div><small id="interactivePlayerSearchStatus" class="player-search-status" aria-live="polite">Scrivi almeno 3 caratteri per cercare nel catalogo.</small></label><button class="button button-primary button-sell" type="submit">Chiama</button></form>
+          <div id="interactiveBidActions" class="interactive-bid-actions" hidden><button class="button button-secondary" data-bid="1">+1</button><button class="button button-secondary" data-bid="5">+5</button><button class="button button-secondary" data-bid="10">+10</button><input id="interactiveCustomBid" type="number" min="1" placeholder="Offerta"><button class="button button-primary" data-bid="custom">Rilancia</button></div>
+          <div id="interactiveResolveActions" class="interactive-bid-actions" hidden><button class="button button-primary" data-action="resolve-live-confirm">Assegna giocatore</button><button class="button button-danger" data-action="resolve-live-rebid">Ribatti da 1</button></div>
+        </section>
+
         <section class="auction-guide" aria-label="Riepilogo della fase corrente">
           <div class="auction-guide-icon" id="currentRoleIcon" aria-hidden="true">🧤</div>
           <div>
@@ -250,11 +267,14 @@
         </section>
       </section>
 
+      <aside id="interactiveTurnPanel" class="interactive-turn-panel" hidden aria-label="Ordine dei turni"><p class="section-kicker">Turni chiamata</p><div id="interactiveTurnList" class="interactive-turn-list"></div></aside>
+      <aside id="interactiveAdminActions" class="interactive-admin-panel" hidden><p class="section-kicker">Controllo admin</p><h2>Regia asta live</h2><label class="interactive-countdown-control">Timer <input id="interactiveCountdownInput" type="number" min="5" max="300" step="1" value="20"> s</label><button class="button button-secondary" data-action="set-live-countdown">Aggiorna timer</button><button class="button button-secondary" data-action="toggle-live-pause">Pausa</button><button class="button button-secondary" data-action="shuffle-live-turn">Mescola turni</button><button class="button button-secondary" data-action="advance-live-turn">Passa turno</button></aside>
+
       <section class="auction-history" aria-labelledby="historyTitle">
         <div class="history-heading">
           <div>
             <p class="section-kicker">Ultime battute</p>
-            <h2 id="historyTitle">Registro dell’asta</h2>
+            <h2 id="historyTitle">Registro dell'asta</h2>
           </div>
           <span id="historyCount" class="counter-pill">0 giocatori</span>
         </div>
@@ -262,6 +282,14 @@
       </section>
     </section>
   </main>
+
+  <footer class="site-footer">
+    <nav class="legal-links" aria-label="Documenti legali">
+      <a href="{{ url_for('privacy_policy') }}">Privacy</a>
+      <a href="{{ url_for('cookie_policy') }}">Cookie</a>
+      <a href="{{ url_for('terms_of_service') }}">Termini</a>
+    </nav>
+  </footer>
 
   <dialog id="editSaleDialog" class="auction-dialog" aria-labelledby="editSaleTitle">
     <form id="editSaleForm" class="dialog-card" method="dialog" novalidate>
@@ -310,7 +338,25 @@
     </form>
   </dialog>
 
+  <dialog id="exportAuctionDialog" class="auction-dialog auction-dialog-small" aria-labelledby="exportAuctionTitle">
+    <section class="dialog-card">
+      <div class="dialog-heading">
+        <div>
+          <p class="section-kicker">Esporta asta</p>
+          <h2 id="exportAuctionTitle">Scegli il formato</h2>
+        </div>
+        <button class="icon-button" type="button" data-action="close-export" aria-label="Chiudi">×</button>
+      </div>
+      <p>JSON conserva tutte le impostazioni dell’asta; CSV esporta la rosa con le colonne Squadra, Calciatore, Ruolo e Prezzo.</p>
+      <div class="dialog-actions">
+        <button class="button button-secondary" type="button" data-action="export-format" data-format="json">Esporta JSON</button>
+        <button class="button button-primary" type="button" data-action="export-format" data-format="csv">Esporta CSV</button>
+      </div>
+    </section>
+  </dialog>
+
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <div id="interactiveClaimBanner" class="interactive-claim-overlay" hidden><form id="interactiveClaimForm" class="interactive-claim-card"><p class="section-kicker">Asta interattiva</p><h2>Scegli la tua squadra</h2><p>La scelta è personale e potrai chiamare o rilanciare solo per questa squadra.</p><label class="field"><span>Squadra</span><select id="interactiveTeamSelect" required></select></label><button class="button button-primary" type="submit">Entra nell'asta</button></form></div>
 </body>
 
 </html>

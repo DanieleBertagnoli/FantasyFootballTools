@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="it">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{ title }} di FantAsta.">
+  <title>{{ title }} | FantAsta</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body class="legal-page">
+  <div class="auth-background" aria-hidden="true"></div>
+  <div class="legal-shell">
+    <header class="site-header legal-site-header">
+      <a class="brand" href="{{ url_for('home') }}" aria-label="Torna a FantAsta">
+        <span class="brand-mark" aria-hidden="true">⚽</span>
+        <span>Fant<span>Asta</span></span>
+      </a>
+      <nav class="legal-header-actions" aria-label="Navigazione account">
+        {% if current_user %}
+        <a class="header-link" href="{{ url_for('home') }}">Dashboard</a>
+        {% else %}
+        <a class="header-link" href="{{ url_for('auth.login') }}">Accedi</a>
+        <a class="button button-secondary auth-header-button" href="{{ url_for('auth.signup') }}">Registrati</a>
+        {% endif %}
+      </nav>
+    </header>
+
+    <main class="legal-main">
+      <p class="eyebrow">Documenti legali</p>
+      <h1>{{ title }}</h1>
+      <p class="legal-updated">Ultimo aggiornamento: {{ legal.last_updated }}</p>
+
+      {% if legal.controller_name == 'Titolare non configurato' or not legal.contact_email %}
+      <aside class="legal-config-warning" role="note">
+        I dati del titolare non sono ancora configurati. Prima della pubblicazione imposta le variabili
+        <code>LEGAL_DATA_CONTROLLER_NAME</code>, <code>LEGAL_CONTACT_EMAIL</code> e
+        <code>LEGAL_BUSINESS_ADDRESS</code>.
+      </aside>
+      {% endif %}
+
+      {% if page == 'privacy' %}
+      <section class="legal-section">
+        <h2>1. Titolare del trattamento</h2>
+        <p>Il titolare del trattamento è <strong>{{ legal.controller_name }}</strong>, con sede/recapito in {{ legal.business_address }}. Per richieste privacy puoi contattare <a href="mailto:{{ legal.contact_email }}">{{ legal.contact_email or 'il recapito da configurare' }}</a>.</p>
+      </section>
+      <section class="legal-section">
+        <h2>2. Dati trattati e finalità</h2>
+        <p>Per creare e gestire un account trattiamo indirizzo email, identificativo dell’account, password conservata esclusivamente in forma hashata, stato di conferma dell’email e dati tecnici della sessione. Per le funzioni dell’app trattiamo inoltre i dati che inserisci nelle aste e nelle note (ad esempio nomi di partecipanti, giocatori, offerte e annotazioni).</p>
+        <p>I dati sono usati per erogare il servizio, autenticare gli utenti, inviare conferme e recuperi password, prevenire abusi e mantenere la sicurezza e l’integrità dei dati.</p>
+      </section>
+      <section class="legal-section">
+        <h2>3. Base giuridica, conservazione e destinatari</h2>
+        <p>Il trattamento è necessario per l’esecuzione del servizio richiesto (art. 6.1.b GDPR), per gli obblighi di legge eventualmente applicabili e per il legittimo interesse alla sicurezza del servizio (art. 6.1.f GDPR). I dati dell’account sono mantenuti fino alla chiusura dell’account o alla richiesta di cancellazione, salvo obblighi di conservazione. I link di verifica e recupero password scadono automaticamente.</p>
+        <p>I dati possono essere trattati dai fornitori tecnici necessari al funzionamento del servizio, inclusi hosting, database e fornitore SMTP. Non sono venduti né ceduti per finalità pubblicitarie.</p>
+      </section>
+      <section class="legal-section">
+        <h2>4. I tuoi diritti</h2>
+        <p>Puoi chiedere accesso, rettifica, cancellazione, limitazione, portabilità o opposizione nei casi previsti dagli artt. 15–22 GDPR, oltre a proporre reclamo al Garante per la protezione dei dati personali. Scrivi a <a href="mailto:{{ legal.contact_email }}">{{ legal.contact_email or 'il recapito da configurare' }}</a> specificando l’account interessato.</p>
+      </section>
+      {% elif page == 'cookies' %}
+      <section class="legal-section">
+        <h2>Cookie utilizzati</h2>
+        <p>FantAsta utilizza esclusivamente cookie tecnici necessari al funzionamento dell’accesso e alla protezione dei moduli. Non utilizza cookie di profilazione, pubblicitari o di analisi di terze parti.</p>
+        <div class="legal-table-wrap"><table><thead><tr><th>Nome</th><th>Finalità</th><th>Durata</th></tr></thead><tbody><tr><td>session</td><td>Mantiene la sessione autenticata e il token anti-CSRF. È un cookie tecnico, HttpOnly e SameSite=Lax; in HTTPS va configurato anche come Secure.</td><td>Sessione del browser</td></tr></tbody></table></div>
+      </section>
+      <section class="legal-section">
+        <h2>Gestione delle preferenze</h2>
+        <p>Poiché non vengono usati cookie non tecnici, non è richiesto un banner di consenso. Puoi rimuovere o bloccare i cookie dalle impostazioni del browser: in quel caso login, registrazione e funzioni protette potrebbero non funzionare correttamente.</p>
+      </section>
+      {% else %}
+      <section class="legal-section">
+        <h2>1. Servizio e account</h2>
+        <p>FantAsta mette a disposizione strumenti per organizzare aste e note della propria lega di fantacalcio. L’utente è responsabile dell’accuratezza dei dati inseriti, della custodia delle proprie credenziali e dell’uso del servizio nel rispetto della legge e dei diritti di terzi.</p>
+      </section>
+      <section class="legal-section">
+        <h2>2. Contenuti e disponibilità</h2>
+        <p>I dati inseriti nelle aste e nelle note restano sotto la responsabilità dell’utente che li crea o condivide. Il servizio può essere aggiornato, sospeso o modificato per motivi tecnici, di sicurezza o manutenzione. Effettua esportazioni periodiche dei dati importanti.</p>
+      </section>
+      <section class="legal-section">
+        <h2>3. Limitazioni e contatti</h2>
+        <p>Il servizio è fornito per l’organizzazione privata delle leghe e non costituisce consulenza sportiva, finanziaria o legale. Per segnalazioni o richieste scrivi a <a href="mailto:{{ legal.contact_email }}">{{ legal.contact_email or 'il recapito da configurare' }}</a>.</p>
+      </section>
+      {% endif %}
+    </main>
+
+    <footer class="legal-footer">
+      <span>FantAsta</span><span aria-hidden="true">•</span>
+      <a href="{{ url_for('privacy_policy') }}">Privacy</a>
+      <a href="{{ url_for('cookie_policy') }}">Cookie</a>
+      <a href="{{ url_for('terms_of_service') }}">Termini</a>
+    </footer>
+  </div>
+</body>
+
+</html>

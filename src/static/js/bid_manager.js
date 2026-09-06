@@ -9,6 +9,7 @@ const API = {
   import: "/api/auction/import",
   export: "/api/auction/export",
   players: "/api/auction/players",
+  interactive: "/api/auction/interactive",
 };
 
 const ROLES = [
@@ -79,6 +80,7 @@ function init() {
     guideTitle: document.getElementById("guideTitle"),
     guideText: document.getElementById("guideText"),
     saleForm: document.getElementById("saleForm"),
+    classicSalePanel: document.getElementById("saleForm")?.closest(".sale-panel"),
     playerName: document.getElementById("playerName"),
     salePrice: document.getElementById("salePrice"),
     buyerSelect: document.getElementById("buyerSelect"),
@@ -96,7 +98,12 @@ function init() {
     confirmDeleteButton: document.getElementById("confirmDeleteButton"),
     toastRegion: document.getElementById("toastRegion"),
     exportButton: document.querySelector('[data-action="export-auction"]'),
+    exportDialog: document.getElementById("exportAuctionDialog"),
     shareButton: document.querySelector('[data-action="share-auction"]'),
+    interactivePanel: document.getElementById("interactivePanel"),
+    interactivePauseBanner: document.getElementById("interactivePauseBanner"), interactiveClaimBanner: document.getElementById("interactiveClaimBanner"), interactiveResolveActions: document.getElementById("interactiveResolveActions"), interactiveTurnPanel: document.getElementById("interactiveTurnPanel"), interactiveTurnList: document.getElementById("interactiveTurnList"),
+    interactiveTitle: document.getElementById("interactiveTitle"), interactivePrice: document.getElementById("interactivePrice"), interactiveTimer: document.getElementById("interactiveTimer"),
+    interactiveClaimForm: document.getElementById("interactiveClaimForm"), interactiveTeamSelect: document.getElementById("interactiveTeamSelect"), interactiveCallForm: document.getElementById("interactiveCallForm"), interactivePlayerName: document.getElementById("interactivePlayerName"), interactiveBidActions: document.getElementById("interactiveBidActions"), interactiveCustomBid: document.getElementById("interactiveCustomBid"), interactiveAdminActions: document.getElementById("interactiveAdminActions"), interactiveCountdownInput: document.getElementById("interactiveCountdownInput"),
     returnAuctionButton: document.getElementById("returnAuctionButton"),
   });
 
@@ -104,17 +111,16 @@ function init() {
   state.readOnly = dom.app.dataset.sharedAuction === "true";
   if (state.readOnly && shareToken) {
     API.auction = `/api/auction/shared/${encodeURIComponent(shareToken)}`;
+    API.interactive = `/api/auction/shared/${encodeURIComponent(shareToken)}/interactive`;
   }
 
   bindEvents();
+  setupPlayerAutocomplete();
   if (!state.readOnly) {
-    setupPlayerAutocomplete();
     updateParticipantNameFields();
   }
   loadAuction();
-  if (state.readOnly) {
-    window.setInterval(loadAuction, 5000);
-  }
+  window.setInterval(loadAuction, 1000);
 }
 
 function bindEvents() {
@@ -148,16 +154,19 @@ function bindEvents() {
     });
   }
   document.addEventListener("click", handleClick);
+  dom.interactiveClaimForm?.addEventListener("submit", interactiveClaim);
+  dom.interactiveCallForm?.addEventListener("submit", interactiveCall);
+  dom.interactiveBidActions?.addEventListener("click", interactiveBid);
 }
 
 function setupPlayerAutocomplete() {
   if (!window.PlayerAutocomplete) return;
-  new window.PlayerAutocomplete({
-    input: dom.playerName,
-    results: document.getElementById("bidPlayerSuggestions"),
-    status: document.getElementById("bidPlayerSearchStatus"),
-    onSelect: () => dom.salePrice.focus(),
-  });
+  if (dom.playerName) {
+    new window.PlayerAutocomplete({ input: dom.playerName, results: document.getElementById("bidPlayerSuggestions"), status: document.getElementById("bidPlayerSearchStatus"), onSelect: () => dom.salePrice.focus() });
+  }
+  if (dom.interactivePlayerName) {
+    new window.PlayerAutocomplete({ input: dom.interactivePlayerName, results: document.getElementById("interactivePlayerSuggestions"), status: document.getElementById("interactivePlayerSearchStatus") });
+  }
 }
 
 async function loadAuction() {
@@ -166,7 +175,7 @@ async function loadAuction() {
     state.auction = extractAuction(response);
   } catch (error) {
     if (error.status !== 404) {
-      showToast(error.message || "Impossibile caricare l’asta.", "error");
+      showToast(error.message || "Impossibile caricare l'asta.", "error");
     }
 
     state.auction = null;
@@ -197,7 +206,52 @@ function render() {
   renderParticipants();
   renderStage();
   renderHistory();
+  renderInteractive();
 }
+
+function renderInteractive() {
+  const live = state.auction?.interactive;
+  const isLive = Boolean(live?.enabled);
+  dom.interactivePanel.hidden = !isLive;
+  if (dom.classicSalePanel) dom.classicSalePanel.hidden = isLive;
+  dom.interactivePauseBanner.hidden = !isLive || !live.paused;
+  document.querySelector('[data-action="start-interactive"]')?.toggleAttribute("hidden", isLive || state.readOnly || !isAuctionReady());
+  if (!isLive) return;
+  const call = live.current_call;
+  const secondsRemaining = call ? Math.max(0, Math.ceil((new Date(call.expires_at) - Date.now()) / 1000)) : live.countdown_seconds;
+  const countdownRatio = call && live.countdown_seconds > 0 ? secondsRemaining / live.countdown_seconds : 1;
+  const countdownState = live.paused ? "paused" : !call ? "idle" : countdownRatio <= 0.25 ? "critical" : countdownRatio <= 0.5 ? "warning" : "ready";
+  dom.interactiveTitle.textContent = call ? call.player_name : `Turno: ${live.turn_participant_name}`;
+  dom.interactivePrice.textContent = call ? `${call.bidder_name} · ${formatCredits(call.price)}` : "In attesa della chiamata";
+  dom.interactiveTimer.textContent = call ? (live.paused ? "PAUSA" : `${secondsRemaining}s`) : `${live.countdown_seconds}s`;
+  dom.interactiveTimer.className = `interactive-countdown is-${countdownState}`;
+  dom.interactiveTeamSelect.innerHTML = getParticipants().map(p => `<option value="${escapeHtml(getParticipantId(p))}"${p.claimed_by_me ? " selected" : ""}${p.claimed && !p.claimed_by_me ? " disabled" : ""}>${escapeHtml(getParticipantName(p))}${p.claimed && !p.claimed_by_me ? " · occupata" : ""}</option>`).join("");
+  const mine = live.viewer_participant_id;
+  dom.interactiveClaimBanner.hidden = Boolean(mine) || live.paused;
+  dom.interactiveCallForm.hidden = !mine || live.paused || Boolean(call) || state.auction.auction_complete || mine !== live.turn_participant_id;
+  dom.interactiveBidActions.hidden = !mine || live.paused || !call || call.expired;
+  dom.interactiveAdminActions.hidden = !state.auction?.access?.can_manage;
+  const pauseButton = dom.interactiveAdminActions.querySelector('[data-action="toggle-live-pause"]');
+  if (pauseButton) pauseButton.textContent = live.paused ? "Riprendi" : "Pausa";
+  dom.interactiveTurnPanel.hidden = !isLive;
+  const completedTurnParticipantIds = new Set(live.completed_turn_participant_ids || []);
+  const participantsById = Object.fromEntries(getParticipants().map((participant) => [getParticipantId(participant), participant]));
+  dom.interactiveTurnList.innerHTML = live.turn_order.map((participantId, index) => {
+    const participant = participantsById[participantId];
+    const current = participantId === live.turn_participant_id;
+    const complete = completedTurnParticipantIds.has(participantId);
+    return `<div class="interactive-turn-item${current ? " is-current" : ""}${complete ? " is-complete" : ""}"><span>${index + 1}</span><strong>${escapeHtml(getParticipantName(participant))}</strong>${current && !complete ? "<i>Ora</i>" : ""}</div>`;
+  }).join("");
+  dom.interactiveResolveActions.hidden = !state.auction?.access?.can_manage || !call?.expired;
+  if (dom.interactiveCountdownInput && document.activeElement !== dom.interactiveCountdownInput) {
+    dom.interactiveCountdownInput.value = live.countdown_seconds;
+  }
+}
+
+async function interactiveClaim(event) { event.preventDefault(); await interactiveRequest("claim", { participant_id: dom.interactiveTeamSelect.value }); }
+async function interactiveCall(event) { event.preventDefault(); await interactiveRequest("call", { player_name: dom.interactivePlayerName.value }); dom.interactivePlayerName.value = ""; }
+async function interactiveBid(event) { const button = event.target.closest("[data-bid]"); if (!button) return; const increment = button.dataset.bid === "custom" ? Number(dom.interactiveCustomBid.value) : Number(state.auction.interactive.current_call.price) + Number(button.dataset.bid); await interactiveRequest("bid", { amount: increment }); }
+async function interactiveRequest(path, body = {}) { try { const result = await request(`${API.interactive}/${path}`, { method: "POST", body: JSON.stringify(body) }); state.auction = extractAuction(result); render(); } catch (error) { showToast(error.message, "error"); } }
 
 function renderParticipants() {
   const participants = getParticipants();
@@ -213,12 +267,20 @@ function renderParticipants() {
         : 0;
       const creditHue = Math.round(4 + percentage * 1.16);
       const participantName = getParticipantName(participant);
+      const isLiveAuction = Boolean(state.auction?.interactive?.enabled);
+      const connectionStatus = participant.connection_status || "unclaimed";
+      const connectionLabel = {
+        online: "Online",
+        offline: "Offline",
+        unclaimed: "Non scelta",
+      }[connectionStatus] || "Non scelta";
 
       return `
         <article class="participant-card" data-participant-id="${escapeHtml(participantId)}">
-          <span class="participant-card-main">
+          <span class="participant-card-main${isLiveAuction ? " is-live" : ""}">
             <span class="participant-avatar" aria-hidden="true">${escapeHtml(getInitials(participantName))}</span>
             <span class="participant-name">${escapeHtml(participantName)}</span>
+            ${isLiveAuction ? `<span class="participant-presence is-${escapeHtml(connectionStatus)}"><i aria-hidden="true"></i>${connectionLabel}</span>` : ""}
             <span class="participant-credit">
               ${escapeHtml(formatCredits(remainingCredits))}
               <small class="participant-credit-label">rimasti</small>
@@ -294,11 +356,11 @@ function renderStage() {
     dom.guideTitle.textContent = "Asta completata. Ottimo lavoro!";
     dom.guideText.textContent = state.readOnly
       ? "La vista condivisa si aggiorna automaticamente."
-      : "Puoi ancora consultare, correggere o esportare il registro dell’asta.";
+      : "Puoi ancora consultare, correggere o esportare il registro dell'asta.";
     if (dom.saleForm) {
       setSaleFormAvailability(true);
       dom.saleHint.classList.remove("is-warning");
-      dom.saleHint.textContent = "L’asta è conclusa: per aggiungere giocatori, correggi prima le battute esistenti.";
+      dom.saleHint.textContent = "L'asta è conclusa: per aggiungere giocatori, correggi prima le battute esistenti.";
     }
     return;
   }
@@ -316,7 +378,7 @@ function renderStage() {
 
   if (progress.total > 0 && progress.completed >= progress.total) {
     dom.guideTitle.textContent = `${role.label} completati.`;
-    dom.guideText.textContent = "Il prossimo inserimento aggiornerà la fase in base allo stato dell’asta.";
+    dom.guideText.textContent = "Il prossimo inserimento aggiornerà la fase in base allo stato dell'asta.";
   } else {
     dom.guideTitle.textContent = `Si battono i ${role.label.toLowerCase()}.`;
     dom.guideText.textContent = "Il ruolo avanza quando tutte le squadre hanno completato gli slot disponibili.";
@@ -444,7 +506,7 @@ async function createAuction(event) {
     return;
   }
 
-  if (isAuctionReady() && !window.confirm("Vuoi iniziare una nuova asta? L’asta attuale verrà sostituita.")) {
+  if (isAuctionReady() && !window.confirm("Vuoi iniziare una nuova asta? L'asta attuale verrà sostituita.")) {
     return;
   }
 
@@ -465,7 +527,7 @@ async function createAuction(event) {
     render();
     showToast("Nuova asta pronta: si parte dai portieri!", "success");
   } catch (error) {
-    showToast(error.message || "Non è stato possibile creare l’asta.", "error");
+    showToast(error.message || "Non è stato possibile creare l'asta.", "error");
   } finally {
     setBusy(dom.newAuctionForm, false);
   }
@@ -489,7 +551,7 @@ async function addSale(event) {
   }
 
   if (state.auction?.auction_complete) {
-    showToast("L’asta è già conclusa.", "warning");
+    showToast("L'asta è già conclusa.", "warning");
     return;
   }
 
@@ -540,21 +602,13 @@ async function handleSelectedImport() {
 }
 
 async function importAuction(file) {
-  if (!file.name.toLowerCase().endsWith(".json") && file.type !== "application/json") {
-    showToast("Scegli un file JSON esportato dal Bid Manager.", "warning");
+  const fileName = file.name.toLowerCase();
+  if (!fileName.endsWith(".json") && !fileName.endsWith(".csv")) {
+    showToast("Scegli un file JSON o CSV.", "warning");
     return;
   }
 
-  if (isAuctionReady() && !window.confirm("Vuoi importare questa asta? L’asta attuale verrà sostituita.")) {
-    return;
-  }
-
-  let auctionData;
-
-  try {
-    auctionData = JSON.parse(await file.text());
-  } catch {
-    showToast("Il file selezionato non contiene JSON valido.", "error");
+  if (isAuctionReady() && !window.confirm("Vuoi importare questa asta? L'asta attuale verrà sostituita.")) {
     return;
   }
 
@@ -564,7 +618,11 @@ async function importAuction(file) {
   try {
     const response = await request(API.import, {
       method: "POST",
-      body: JSON.stringify(auctionData),
+      body: (() => {
+        const formData = new FormData();
+        formData.append("file", file);
+        return formData;
+      })(),
     });
 
     state.auction = extractAuction(response) || await fetchAuctionSnapshot();
@@ -572,7 +630,7 @@ async function importAuction(file) {
     render();
     showToast("Asta importata correttamente.", "success");
   } catch (error) {
-    showToast(error.message || "Non è stato possibile importare l’asta.", "error");
+    showToast(error.message || "Non è stato possibile importare l'asta.", "error");
   } finally {
     dom.importDropzone.disabled = false;
     dom.importDropzone.classList.remove("is-loading");
@@ -657,39 +715,36 @@ async function deleteSale(event) {
   }
 }
 
-async function exportAuction() {
+async function exportAuction(format) {
   if (!isAuctionReady()) {
-    showToast("Non c’è ancora un’asta da esportare.", "warning");
+    showToast("Non c'è ancora un'asta da esportare.", "warning");
     return;
   }
 
   dom.exportButton.disabled = true;
 
   try {
-    const response = await fetch(API.export, {
-      headers: { Accept: "application/json, application/octet-stream" },
+    const response = await fetch(`${API.export}?format=${encodeURIComponent(format)}`, {
+      headers: { Accept: format === "csv" ? "text/csv" : "application/json" },
     });
 
     if (!response.ok) {
       throw await responseError(response);
     }
 
-    const contentType = response.headers.get("content-type") || "";
-    const blob = contentType.includes("application/json")
-      ? new Blob([JSON.stringify(extractAuction(await response.json()), null, 2)], { type: "application/json" })
-      : await response.blob();
+    const blob = await response.blob();
 
     const link = document.createElement("a");
     const objectUrl = URL.createObjectURL(blob);
     link.href = objectUrl;
-    link.download = "fantasta-asta.json";
+    link.download = `fantasta-asta.${format}`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    showToast("File JSON esportato.", "success");
+    showToast(`File ${format.toUpperCase()} esportato.`, "success");
   } catch (error) {
-    showToast(error.message || "Non è stato possibile esportare l’asta.", "error");
+    showToast(error.message || "Non è stato possibile esportare l'asta.", "error");
   } finally {
     dom.exportButton.disabled = false;
   }
@@ -723,7 +778,22 @@ function handleClick(event) {
   }
 
   if (action === "export-auction") {
-    exportAuction();
+    if (!isAuctionReady()) {
+      showToast("Non c'è ancora un'asta da esportare.", "warning");
+      return;
+    }
+    openDialog(dom.exportDialog);
+    return;
+  }
+
+  if (action === "close-export") {
+    closeDialog(dom.exportDialog);
+    return;
+  }
+
+  if (action === "export-format") {
+    closeDialog(dom.exportDialog);
+    exportAuction(trigger.dataset.format);
     return;
   }
 
@@ -731,6 +801,18 @@ function handleClick(event) {
     shareAuction();
     return;
   }
+
+  if (action === "start-interactive") {
+    const seconds = window.prompt("Countdown per ogni offerta (5-300 secondi):", "20");
+    if (seconds) interactiveRequest("start", { countdown_seconds: Number(seconds) });
+    return;
+  }
+  if (action === "toggle-live-pause") { interactiveRequest("pause", { paused: !state.auction.interactive.paused }); return; }
+  if (action === "set-live-countdown") { interactiveRequest("countdown", { countdown_seconds: Number(dom.interactiveCountdownInput.value) }); return; }
+  if (action === "shuffle-live-turn") { interactiveRequest("turn/shuffle"); return; }
+  if (action === "advance-live-turn") { interactiveRequest("turn/advance"); return; }
+  if (action === "resolve-live-confirm") { interactiveRequest("resolve", { confirm: true }); return; }
+  if (action === "resolve-live-rebid") { interactiveRequest("resolve", { confirm: false }); return; }
 
   if (state.readOnly) return;
 
@@ -752,7 +834,7 @@ function handleClick(event) {
 async function shareAuction() {
   const shareUrl = state.auction?.access?.share_url;
   if (!shareUrl) {
-    showToast("Crea o apri un’asta prima di condividerla.", "warning");
+    showToast("Crea o apri un'asta prima di condividerla.", "warning");
     return;
   }
 
@@ -760,7 +842,7 @@ async function shareAuction() {
     await navigator.clipboard.writeText(shareUrl);
     showToast("Link di sola lettura copiato negli appunti.", "success");
   } catch {
-    window.prompt("Copia il link di sola lettura dell’asta:", shareUrl);
+    window.prompt("Copia il link di sola lettura dell'asta:", shareUrl);
   }
 }
 
@@ -799,7 +881,7 @@ function updateSaleHint() {
 
   if (state.auction?.auction_complete) {
     dom.saleHint.classList.remove("is-warning");
-    dom.saleHint.textContent = "L’asta è conclusa: non sono disponibili nuove battute.";
+    dom.saleHint.textContent = "L'asta è conclusa: non sono disponibili nuove battute.";
     return;
   }
 
@@ -832,9 +914,15 @@ function updateSaleHint() {
 
 async function request(url, options = {}) {
   const headers = new Headers(options.headers || {});
+  const method = (options.method || "GET").toUpperCase();
   headers.set("Accept", "application/json");
 
-  if (options.body) {
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  }
+
+  if (options.body && !(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -861,7 +949,7 @@ async function request(url, options = {}) {
 }
 
 async function responseError(response) {
-  let message = "Si è verificato un errore durante l’operazione.";
+  let message = "Si è verificato un errore durante l'operazione.";
 
   try {
     const payload = await response.json();

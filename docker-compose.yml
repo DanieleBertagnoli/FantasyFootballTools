@@ -6,25 +6,34 @@ networks:
 services:
   fantasy-football-tools:
     container_name: fantasy-football-tools
-    
     build:
       context: .
-    
     env_file:
       - .env
-    
+    environment:
+      APP_ENV: ${APP_ENV:-production}
     ports:
-      - "5010:5010"
-    
+      - "127.0.0.1:${APP_PORT:-5010}:5010"
     volumes:
       - ./persistent_data:/app/persistent_data
-    
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:5010/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       fantasy-football-tools-db:
         condition: service_healthy
-    
     restart: unless-stopped
-    
     networks:
       - fantasy_football_tools_network
 
@@ -35,10 +44,8 @@ services:
     
     env_file:
       - .env
-
     volumes:
       - ./persistent_data/mariadb:/var/lib/mysql
-    
     healthcheck:
       test: ["CMD-SHELL", "mariadb-admin ping --host=127.0.0.1 --user=root --password=\"$${MARIADB_ROOT_PASSWORD}\" --silent"]
       interval: 10s
@@ -47,7 +54,6 @@ services:
       start_period: 30s
     
     restart: unless-stopped
-    
     networks:
       fantasy_football_tools_network:
         aliases:

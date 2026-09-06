@@ -68,7 +68,7 @@
             <p class="tool-card-label">Disponibile ora</p>
             <h2>Notes Manager</h2>
             <p>
-              Organizza fasce, percentuali di budget e osservazioni sui giocatori prima dell’asta.
+              Organizza fasce, percentuali di budget e osservazioni sui giocatori prima dell'asta.
             </p>
           </div>
           <a class="button button-secondary" href="{{ url_for('notes_manager') }}">
@@ -82,6 +82,11 @@
       <span>FantAsta</span>
       <span aria-hidden="true">•</span>
       <span>Organizza. Rilancia. Vinci.</span>
+      <nav class="legal-links" aria-label="Documenti legali">
+        <a href="{{ url_for('privacy_policy') }}">Privacy</a>
+        <a href="{{ url_for('cookie_policy') }}">Cookie</a>
+        <a href="{{ url_for('terms_of_service') }}">Termini</a>
+      </nav>
     </footer>
   </div>
 </body>

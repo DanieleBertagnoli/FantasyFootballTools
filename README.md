@@ -1,6 +1,6 @@
 # Fantasy Football Tools
 
-Applicazione Flask locale per preparare e gestire l'asta del fantacalcio. Include un Bid Manager con controllo dei crediti, ruoli progressivi, storico modificabile e backup JSON, oltre a un Notes Manager per organizzare la strategia sui giocatori prima dell’asta.
+Applicazione Flask locale per preparare e gestire l'asta del fantacalcio. Include un Bid Manager con controllo dei crediti, ruoli progressivi, storico modificabile e backup JSON, oltre a un Notes Manager per organizzare la strategia sui giocatori prima dell'asta.
 
 ## Avvio con Docker Compose
 
@@ -14,13 +14,36 @@ docker compose up --build -d
 ```
 
 L'app è disponibile su `http://127.0.0.1:5010`, oppure sulla porta impostata
-con `APP_PORT`. Il processo nel container usa sempre la porta interna `5010`;
-`APP_PORT` modifica solo la porta pubblicata sull'host.
+con `APP_PORT`. Il processo nel container usa Gunicorn sulla porta interna
+`5010`; `APP_PORT` modifica solo la porta pubblicata su `127.0.0.1` dell'host.
 
 Imposta in `.env` un valore lungo e casuale per `FLASK_SECRET_KEY`, password
 MariaDB diverse per `DB_PASSWORD` e `MARIADB_ROOT_PASSWORD`, e il vero URL
-pubblico in `APP_BASE_URL`. Se l'app viene esposta in HTTPS, abilita anche
-`SESSION_COOKIE_SECURE=1`.
+pubblico in `APP_BASE_URL`.
+
+## Pubblicazione in produzione
+
+Il container applicativo usa Gunicorn, gira come utente non root, ha filesystem
+di sola lettura (tranne `persistent_data/`) ed espone solo il loopback. Pubblica
+quindi il servizio dietro un reverse proxy HTTPS gestito (Caddy, Nginx o
+equivalente), inoltrando le richieste a `127.0.0.1:${APP_PORT:-5010}`.
+
+Prima della pubblicazione:
+
+- imposta `APP_ENV=production`, `APP_BASE_URL=https://tuo-dominio`,
+  `TRUST_PROXY_HEADERS=1` e `ALLOWED_HOSTS=tuo-dominio`;
+- usa HTTPS end-to-end fino al browser: con un `APP_BASE_URL` HTTPS, cookie
+  Secure e HSTS si attivano automaticamente;
+- genera segreti e password unici, non usare mai i valori d'esempio;
+- mantieni un backup cifrato e verificato di `persistent_data/`, che include
+  MariaDB e i documenti delle aste;
+- monitora il percorso `/healthz` dal reverse proxy o dalla piattaforma;
+- imposta `LEGAL_DATA_CONTROLLER_NAME`, `LEGAL_CONTACT_EMAIL` e
+  `LEGAL_BUSINESS_ADDRESS`, poi sottoponi l'informativa al tuo consulente
+  legale prima della messa online.
+
+Non attivare `TRUST_PROXY_HEADERS` se l'app è raggiungibile direttamente da
+client non fidati: i relativi header devono essere sovrascritti dal proxy.
 
 Per inviare le email con Gmail, lascia `MAIL_USERNAME` e `MAIL_FROM` su
 `wedev.danielebertagnoli@gmail.com` e inserisci in `MAIL_PASSWORD` una
@@ -99,7 +122,7 @@ uv run flask --app main players-sync --force
 Con Docker Compose puoi eseguire lo stesso aggiornamento così:
 
 ```bash
-docker compose exec app flask --app main:app players-sync --force
+docker compose exec fantasy-football-tools flask --app main:app players-sync --force
 ```
 
 La stagione viene calcolata automaticamente: da luglio in poi `YYYY-(YYYY+1)`, prima di luglio quella iniziata l'anno precedente. Per esempio, a settembre 2026 viene usata `Serie A 2026-2027`; l'anno prossimo cambierà da sola. Puoi forzare una stagione specifica con `--season-start 2026`.
