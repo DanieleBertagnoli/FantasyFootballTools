@@ -4972,3 +4972,38 @@ select:focus-visible {
     border-radius: 16px;
   }
 }
+
+/* Keep auth and header surfaces in sync even though their base rules are
+   declared later in this stylesheet. */
+:root[data-theme="blue"] body.auth-page,
+:root[data-theme="blue"] .auth-background {
+  background:
+    radial-gradient(circle at 80% 12%, rgba(85, 202, 255, 0.22), transparent 29rem),
+    linear-gradient(125deg, rgba(3, 15, 30, 0.96), rgba(7, 35, 60, 0.88)),
+    url("images/auction-stadium-bg.png") center / cover no-repeat;
+}
+
+:root[data-theme="dark"] body.auth-page,
+:root[data-theme="dark"] .auth-background {
+  background:
+    radial-gradient(circle at 80% 12%, rgba(169, 183, 255, 0.16), transparent 29rem),
+    linear-gradient(125deg, rgba(15, 16, 21, 0.97), rgba(28, 30, 39, 0.9)),
+    url("images/auction-stadium-bg.png") center / cover no-repeat;
+}
+
+:root[data-theme="white"] body.auth-page,
+:root[data-theme="white"] .auth-background {
+  background:
+    radial-gradient(circle at 80% 12%, rgba(60, 157, 99, 0.18), transparent 29rem),
+    linear-gradient(125deg, rgba(237, 244, 239, 0.94), rgba(215, 235, 220, 0.84)),
+    url("images/auction-stadium-bg.png") center / cover no-repeat;
+}
+
+:root[data-theme="white"] .site-header,
+:root[data-theme="white"] .auction-site-header,
+:root[data-theme="white"] .notes-site-header,
+:root[data-theme="white"] .auth-site-header,
+:root[data-theme="white"] .legal-site-header {
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 1px 0 rgba(24, 70, 41, 0.08);
+}
