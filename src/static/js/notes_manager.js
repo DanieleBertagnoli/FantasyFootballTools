@@ -196,6 +196,8 @@ function render() {
   dom.setupView.hidden = !showSetup;
   dom.workspace.hidden = showSetup;
   dom.returnNotesButton.hidden = !hasNotes;
+  dom.exportJsonButton.hidden = !hasNotes;
+  dom.exportMarkdownButton.hidden = !hasNotes;
   dom.exportJsonButton.disabled = !hasNotes;
   dom.exportMarkdownButton.disabled = !hasNotes;
 

@@ -2603,8 +2603,7 @@ select:focus-visible {
 }
 
 .notes-site-header {
-  position: sticky;
-  top: 0;
+  position: relative;
   display: flex;
   min-height: 78px;
   align-items: center;
@@ -5194,11 +5193,12 @@ select:focus-visible {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 11%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-:root[data-theme="blue"] .auction-site-header,
-:root[data-theme="blue"] .notes-site-header,
-:root[data-theme="blue"] .auth-site-header,
-:root[data-theme="dark"] .auction-site-header,
-:root[data-theme="dark"] .notes-site-header,
-:root[data-theme="dark"] .auth-site-header {
-  background: color-mix(in srgb, var(--surface-solid) 78%, transparent);
+/* Headers deliberately remain transparent in every theme.  The page
+   background shows through, matching the landing-page treatment. */
+:root[data-theme] .auction-site-header,
+:root[data-theme] .notes-site-header,
+:root[data-theme] .auth-site-header,
+:root[data-theme] .legal-site-header {
+  z-index: 70;
+  background: transparent;
 }
