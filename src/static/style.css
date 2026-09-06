@@ -19,6 +19,8 @@
   --auth-card-end: rgba(7, 26, 17, 0.97);
   --auth-input: rgba(2, 14, 8, 0.5);
   --auth-input-focus: rgba(3, 18, 10, 0.68);
+  --control-surface: rgba(3, 15, 9, 0.45);
+  --control-surface-focus: rgba(3, 18, 10, 0.68);
   --radius-lg: 24px;
   --radius-md: 16px;
   --radius-sm: 11px;
@@ -72,6 +74,8 @@
   --auth-card-end: rgba(7, 27, 48, 0.97);
   --auth-input: rgba(3, 20, 36, 0.56);
   --auth-input-focus: rgba(6, 31, 54, 0.74);
+  --control-surface: rgba(3, 20, 36, 0.56);
+  --control-surface-focus: rgba(6, 31, 54, 0.74);
 }
 
 :root[data-theme="white"] {
@@ -95,6 +99,8 @@
   --auth-card-end: rgba(238, 247, 240, 0.98);
   --auth-input: rgba(241, 248, 243, 0.92);
   --auth-input-focus: rgba(255, 255, 255, 1);
+  --control-surface: rgba(241, 248, 243, 0.92);
+  --control-surface-focus: rgba(255, 255, 255, 1);
 }
 
 :root[data-theme="dark"] {
@@ -118,6 +124,8 @@
   --auth-card-end: rgba(29, 32, 40, 0.98);
   --auth-input: rgba(16, 18, 24, 0.66);
   --auth-input-focus: rgba(25, 28, 37, 0.86);
+  --control-surface: rgba(16, 18, 24, 0.66);
+  --control-surface-focus: rgba(25, 28, 37, 0.86);
 }
 
 * {
@@ -213,12 +221,12 @@ p {
   height: 1.55em;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgba(184, 243, 74, 0.36);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
   border-radius: 50%;
-  background: rgba(184, 243, 74, 0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   font-size: var(--font-size-18);
   line-height: 1;
-  box-shadow: inset 0 0 20px rgba(184, 243, 74, 0.08);
+  box-shadow: inset 0 0 20px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .button {
@@ -250,14 +258,14 @@ p {
 .import-dropzone:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 3px solid rgba(208, 255, 103, 0.4);
+  outline: 3px solid color-mix(in srgb, var(--accent-strong) 40%, transparent);
   outline-offset: 2px;
 }
 
 .button-primary {
-  color: #122009;
+  color: var(--accent-dark);
   background: var(--accent);
-  box-shadow: 0 10px 23px rgba(135, 207, 48, 0.2);
+  box-shadow: 0 10px 23px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .button-primary:hover:not(:disabled) {
@@ -267,13 +275,13 @@ select:focus-visible {
 .button-secondary {
   color: var(--muted-strong);
   border-color: var(--line-strong);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-light);
 }
 
 .button-secondary:hover:not(:disabled) {
   color: var(--ink);
-  border-color: rgba(184, 243, 74, 0.4);
-  background: rgba(184, 243, 74, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .button-danger {
@@ -290,7 +298,7 @@ select:focus-visible {
 
 .button-quiet:hover:not(:disabled) {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--surface-light);
 }
 
 .eyebrow,
@@ -312,7 +320,7 @@ select:focus-visible {
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted-strong);
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--surface-light);
   font-family: var(--font-mono);
   font-size: var(--font-size-11);
   font-weight: 500;
@@ -5051,4 +5059,146 @@ select:focus-visible {
   border-color: var(--line);
   color: var(--muted-strong);
   background: var(--surface-light);
+}
+
+/* Theme surface map ------------------------------------------------------
+   Legacy page sections originally had their own green gradients.  Keep the
+   layout-specific styling, while sourcing every actual surface from the
+   active theme tokens. */
+:root[data-theme] .landing-hero,
+:root[data-theme] .tool-card,
+:root[data-theme] .tool-card-primary,
+:root[data-theme] .tool-card-muted,
+:root[data-theme] .coming-soon-card,
+:root[data-theme] .setup-card,
+:root[data-theme] .setup-tip,
+:root[data-theme] .sale-panel,
+:root[data-theme] .notes-dialog .dialog-card,
+:root[data-theme] .interactive-claim-card {
+  border-color: var(--line-strong);
+  background: linear-gradient(145deg, var(--surface-solid), var(--surface));
+  box-shadow: var(--shadow);
+}
+
+:root[data-theme] .participant-rail,
+:root[data-theme] .roster-panel,
+:root[data-theme] .auction-history,
+:root[data-theme] .notes-overview,
+:root[data-theme] .notes-catalogue,
+:root[data-theme] .interactive-admin-panel,
+:root[data-theme] .interactive-turn-panel {
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+:root[data-theme] .participant-card,
+:root[data-theme] .participant-slot,
+:root[data-theme] .role-limit-field,
+:root[data-theme] .participant-name-list .field,
+:root[data-theme] .role-progress,
+:root[data-theme] .auction-guide,
+:root[data-theme] .roster-stat,
+:root[data-theme] .roster-group,
+:root[data-theme] .notes-empty-state,
+:root[data-theme] .notes-tier-overview-item,
+:root[data-theme] .notes-player-card,
+:root[data-theme] .legal-section,
+:root[data-theme] .legal-table-wrap {
+  border-color: var(--line);
+  background: var(--surface-light);
+}
+
+:root[data-theme] .auction-dialog {
+  border-color: var(--line-strong);
+  background: var(--surface-solid);
+}
+
+:root[data-theme] .field input,
+:root[data-theme] .field select,
+:root[data-theme] .notes-page .field textarea,
+:root[data-theme] .role-limit-field input {
+  border-color: var(--line-strong);
+  color: var(--ink);
+  background-color: var(--control-surface);
+}
+
+:root[data-theme] .field input:focus,
+:root[data-theme] .field select:focus,
+:root[data-theme] .notes-page .field textarea:focus,
+:root[data-theme] .role-limit-field input:focus {
+  border-color: var(--accent);
+  background-color: var(--control-surface-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root[data-theme] .field select option {
+  color: var(--ink);
+  background: var(--surface-solid);
+}
+
+:root[data-theme] .brand-mark,
+:root[data-theme] .tool-card-icon,
+:root[data-theme] .coming-soon-icon,
+:root[data-theme] .card-icon,
+:root[data-theme] .auction-guide-icon,
+:root[data-theme] .live-indicator,
+:root[data-theme] .notes-stage-badge,
+:root[data-theme] .notes-role-icon,
+:root[data-theme] .player-suggestion-avatar {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root[data-theme] .import-dropzone {
+  border-color: color-mix(in srgb, var(--accent) 44%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+:root[data-theme] .import-dropzone:hover,
+:root[data-theme] .import-dropzone.is-dragging,
+:root[data-theme] .participant-card:hover,
+:root[data-theme] .icon-button:hover,
+:root[data-theme] .history-action:hover,
+:root[data-theme] .player-suggestion:hover,
+:root[data-theme] .player-suggestion.is-active,
+:root[data-theme] .player-suggestion[aria-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root[data-theme] .participant-card.is-selected,
+:root[data-theme] .interactive-turn-item.is-current {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 18%, transparent),
+    color-mix(in srgb, var(--accent) 5%, transparent)
+  );
+}
+
+:root[data-theme] .interactive-panel {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 25%, var(--surface-solid)),
+    var(--surface)
+  );
+}
+
+:root[data-theme] .interactive-countdown:not(.is-warning):not(.is-critical):not(.is-paused) {
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 27%, var(--surface-solid));
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 11%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+:root[data-theme="blue"] .auction-site-header,
+:root[data-theme="blue"] .notes-site-header,
+:root[data-theme="blue"] .auth-site-header,
+:root[data-theme="dark"] .auction-site-header,
+:root[data-theme="dark"] .notes-site-header,
+:root[data-theme="dark"] .auth-site-header {
+  background: color-mix(in srgb, var(--surface-solid) 78%, transparent);
 }
