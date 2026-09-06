@@ -12,6 +12,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
     rel="stylesheet">
+  <script src="{{ url_for('static', filename='js/theme-picker.js') }}"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script defer src="{{ url_for('static', filename='js/player_autocomplete.js') }}"></script>
   <script defer src="{{ url_for('static', filename='js/bid_manager.js') }}"></script>
@@ -39,6 +40,15 @@
       {% endif %}
       {% if current_user %}
       <span class="header-account-email" title="{{ current_user.email }}"><span aria-hidden="true">●</span> {{ current_user.email }}</span>
+      <details class="theme-picker">
+        <summary aria-label="Scegli il tema del sito" title="Tema">▦</summary>
+        <div class="theme-picker-panel" role="group" aria-label="Tema del sito">
+          <button type="button" data-theme-choice="green" aria-label="Tema verde"><i class="theme-swatch theme-swatch-green"></i><span>Verde</span></button>
+          <button type="button" data-theme-choice="blue" aria-label="Tema blu"><i class="theme-swatch theme-swatch-blue"></i><span>Blu</span></button>
+          <button type="button" data-theme-choice="white" aria-label="Tema chiaro"><i class="theme-swatch theme-swatch-white"></i><span>White</span></button>
+          <button type="button" data-theme-choice="dark" aria-label="Tema dark"><i class="theme-swatch theme-swatch-dark"></i><span>Dark</span></button>
+        </div>
+      </details>
       <form class="header-logout-form" method="post" action="{{ url_for('auth.logout') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="button button-secondary account-logout" type="submit"><span aria-hidden="true">↪</span> Esci</button>
@@ -46,6 +56,15 @@
       {% else %}
       <a class="header-link" href="{{ url_for('auth.login') }}">Accedi</a>
       <a class="button button-secondary account-signup" href="{{ url_for('auth.signup') }}">Registrati</a>
+      <details class="theme-picker">
+        <summary aria-label="Scegli il tema del sito" title="Tema">▦</summary>
+        <div class="theme-picker-panel" role="group" aria-label="Tema del sito">
+          <button type="button" data-theme-choice="green" aria-label="Tema verde"><i class="theme-swatch theme-swatch-green"></i><span>Verde</span></button>
+          <button type="button" data-theme-choice="blue" aria-label="Tema blu"><i class="theme-swatch theme-swatch-blue"></i><span>Blu</span></button>
+          <button type="button" data-theme-choice="white" aria-label="Tema chiaro"><i class="theme-swatch theme-swatch-white"></i><span>White</span></button>
+          <button type="button" data-theme-choice="dark" aria-label="Tema dark"><i class="theme-swatch theme-swatch-dark"></i><span>Dark</span></button>
+        </div>
+      </details>
       {% endif %}
     </div>
   </header>

@@ -47,6 +47,63 @@
   --font-size-display-xl: clamp(46px, calc(5.1vw + 10px), 76px);
 }
 
+:root[data-theme="blue"] {
+  color-scheme: dark;
+  --ink: #eff8ff;
+  --muted: #a4bbd0;
+  --muted-strong: #d5e5f3;
+  --canvas: #061321;
+  --surface: rgba(10, 31, 52, 0.86);
+  --surface-solid: #102f4b;
+  --surface-light: rgba(34, 73, 108, 0.58);
+  --line: rgba(190, 224, 250, 0.16);
+  --line-strong: rgba(190, 224, 250, 0.3);
+  --accent: #55caff;
+  --accent-strong: #a8e6ff;
+  --accent-dark: #092c42;
+  --gold: #ffd06a;
+  --danger: #ff7d78;
+  --shadow: 0 22px 55px rgba(0, 10, 24, 0.38);
+}
+
+:root[data-theme="white"] {
+  color-scheme: light;
+  --ink: #15271c;
+  --muted: #5a6c60;
+  --muted-strong: #3f5547;
+  --canvas: #edf4ef;
+  --surface: rgba(255, 255, 255, 0.88);
+  --surface-solid: #ffffff;
+  --surface-light: rgba(221, 237, 225, 0.84);
+  --line: rgba(24, 70, 41, 0.16);
+  --line-strong: rgba(24, 70, 41, 0.3);
+  --accent: #25814c;
+  --accent-strong: #3c9d63;
+  --accent-dark: #ffffff;
+  --gold: #9a6800;
+  --danger: #c24b43;
+  --shadow: 0 18px 45px rgba(26, 53, 35, 0.14);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #f0f2f6;
+  --muted: #a8afbc;
+  --muted-strong: #d2d7e0;
+  --canvas: #121419;
+  --surface: rgba(29, 32, 40, 0.88);
+  --surface-solid: #242833;
+  --surface-light: rgba(60, 65, 79, 0.6);
+  --line: rgba(224, 228, 240, 0.15);
+  --line-strong: rgba(224, 228, 240, 0.28);
+  --accent: #a9b7ff;
+  --accent-strong: #d2d9ff;
+  --accent-dark: #202548;
+  --gold: #f4ca72;
+  --danger: #ff827d;
+  --shadow: 0 22px 55px rgba(0, 0, 0, 0.4);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2142,6 +2199,185 @@ select:focus-visible {
   .toast-region {
     right: 15px;
     bottom: 15px;
+  }
+}
+
+/* Theme picker ----------------------------------------------------------- */
+
+.theme-picker {
+  position: relative;
+  z-index: 20;
+  flex: 0 0 auto;
+}
+
+.theme-picker > summary {
+  display: grid;
+  width: 38px;
+  min-height: 38px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 27% 28%, #b8f34a 0 13%, transparent 14%),
+    radial-gradient(circle at 73% 27%, #55caff 0 13%, transparent 14%),
+    radial-gradient(circle at 27% 73%, #ffffff 0 13%, transparent 14%),
+    radial-gradient(circle at 73% 73%, #2b303c 0 13%, transparent 14%),
+    var(--surface-light);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  font-size: 0;
+  list-style: none;
+  transition: border-color 150ms ease, transform 150ms ease, background 150ms ease;
+}
+
+.theme-picker > summary::-webkit-details-marker {
+  display: none;
+}
+
+.theme-picker > summary::after {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  content: "";
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.34));
+}
+
+.theme-picker > summary:hover,
+.theme-picker[open] > summary {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.theme-picker-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: 152px;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow);
+}
+
+.theme-picker-panel button {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted-strong);
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--font-size-10);
+  font-weight: 800;
+  text-align: left;
+}
+
+.theme-picker-panel button:hover,
+.theme-picker-panel button.is-active {
+  border-color: var(--line-strong);
+  color: var(--ink);
+  background: var(--surface-light);
+}
+
+.theme-picker-panel button.is-active::after {
+  margin-left: auto;
+  color: var(--accent);
+  content: "✓";
+}
+
+.theme-swatch {
+  display: block;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.12);
+}
+
+.theme-swatch-green { background: #b8f34a; }
+.theme-swatch-blue { background: #55caff; }
+.theme-swatch-white { background: #f4f7f4; }
+.theme-swatch-dark { background: #292d38; }
+
+.theme-picker > summary:focus-visible,
+.theme-picker-panel button:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Page backgrounds inherit the selected colour system as well. */
+:root[data-theme="blue"] .landing-page,
+:root[data-theme="blue"] .notes-page,
+:root[data-theme="blue"] .auction-page,
+:root[data-theme="blue"] .auth-page,
+:root[data-theme="blue"] .legal-page {
+  background: #061321;
+}
+
+:root[data-theme="blue"] .auction-background,
+:root[data-theme="blue"] .notes-background,
+:root[data-theme="blue"] .auth-background {
+  background:
+    radial-gradient(circle at 80% 12%, rgba(85, 202, 255, 0.18), transparent 29rem),
+    linear-gradient(125deg, rgba(3, 15, 30, 0.94), rgba(7, 35, 60, 0.82)),
+    url("images/auction-stadium-bg.png") center / cover no-repeat;
+}
+
+:root[data-theme="dark"] .landing-page,
+:root[data-theme="dark"] .notes-page,
+:root[data-theme="dark"] .auction-page,
+:root[data-theme="dark"] .auth-page,
+:root[data-theme="dark"] .legal-page {
+  background: #121419;
+}
+
+:root[data-theme="dark"] .auction-background,
+:root[data-theme="dark"] .notes-background,
+:root[data-theme="dark"] .auth-background {
+  background:
+    radial-gradient(circle at 80% 12%, rgba(169, 183, 255, 0.13), transparent 29rem),
+    linear-gradient(125deg, rgba(15, 16, 21, 0.95), rgba(28, 30, 39, 0.87)),
+    url("images/auction-stadium-bg.png") center / cover no-repeat;
+}
+
+:root[data-theme="white"] .landing-page,
+:root[data-theme="white"] .notes-page,
+:root[data-theme="white"] .auction-page,
+:root[data-theme="white"] .auth-page,
+:root[data-theme="white"] .legal-page {
+  background: #edf4ef;
+}
+
+:root[data-theme="white"] .auction-background,
+:root[data-theme="white"] .notes-background,
+:root[data-theme="white"] .auth-background {
+  opacity: 0.22;
+  background:
+    radial-gradient(circle at 80% 12%, rgba(60, 157, 99, 0.5), transparent 29rem),
+    linear-gradient(125deg, rgba(230, 244, 234, 0.76), rgba(209, 234, 217, 0.5)),
+    url("images/auction-stadium-bg.png") center / cover no-repeat;
+}
+
+:root[data-theme="white"] .auction-site-header,
+:root[data-theme="white"] .notes-site-header,
+:root[data-theme="white"] .auth-site-header {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+@media (max-width: 600px) {
+  .theme-picker > summary {
+    width: 36px;
+    min-height: 36px;
   }
 }
 
