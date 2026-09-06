@@ -55,6 +55,38 @@ La cartella gitignorata `persistent_data/` conserva `mariadb/`, il catalogo
 `player_catalogue.json` e i JSON dell'app; non eliminarla se vuoi mantenere i
 dati tra gli aggiornamenti dei container.
 
+Compose esegue prima `storage-init`, che assegna la cartella dei dati e le
+sottocartelle di aste e note all'utente applicativo (UID/GID 1000). Questo
+permette al processo non root di salvare i JSON anche quando Docker ha creato
+il bind mount come root. I permessi della sottocartella MariaDB non vengono
+modificati.
+
+## Account e profilo
+
+La registrazione richiede nome, cognome, nome utente, email e password.
+Il nome utente contiene da 3 a 32 caratteri (lettere senza accenti, numeri,
+punti e underscore), inizia con una lettera o un numero ed è univoco senza
+distinguere maiuscole e minuscole. La disponibilità viene verificata nel
+modulo e nuovamente dal database al salvataggio. Il login accetta sia email
+sia nome utente, dopo la conferma dell'email.
+
+Dal nome utente nel banner si apre `/profile`, dove è possibile aggiornare
+i dati personali e cambiare password inserendo quella attuale. Il cambio
+password invalida le altre sessioni e i precedenti link di recupero.
+
+Al primo accesso al database dopo l'aggiornamento viene eseguita una migrazione
+automatica: gli account esistenti conservano ID, email, password e sessioni;
+ricevono un nome utente provvisorio `utente_<id>` (con suffisso in caso di
+collisione). Nome e cognome restano vuoti finché l'utente completa il profilo.
+La migrazione è ripetibile ed è serializzata tra i worker Gunicorn.
+
+I test usano un database MariaDB separato e temporaneo, senza inviare email:
+
+```bash
+docker compose -f tests/compose.yml run --build --rm tests
+docker compose -f tests/compose.yml down
+```
+
 ## Sviluppo locale
 
 Per lavorare senza Docker serve una MariaDB già raggiungibile e un `.env`

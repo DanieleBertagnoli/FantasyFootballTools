@@ -1,0 +1,65 @@
+{% extends "auth_base.html" %}
+
+{% block title %}Il tuo profilo{% endblock %}
+{% block body_class %}auth-page-profile{% endblock %}
+
+{% block header_actions %}
+<a class="header-account-name" href="{{ url_for('auth.profile') }}" aria-current="page">
+  <span aria-hidden="true">●</span> {{ current_user.username }}
+</a>
+<a class="header-link" href="{{ url_for('home') }}">Dashboard</a>
+<form class="header-logout-form" method="post" action="{{ url_for('auth.logout') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="header-link account-logout" type="submit">Esci</button>
+</form>
+{% endblock %}
+
+{% block auth_intro %}
+<section class="auth-intro" aria-labelledby="auth-intro-title">
+  <p class="eyebrow">Il tuo account</p>
+  <h1 id="auth-intro-title">Ciao, {{ current_user.first_name or current_user.username }}.</h1>
+  <p class="auth-intro-copy">Qui puoi aggiornare i tuoi dati e cambiare la password di accesso.</p>
+  <a class="button button-secondary" href="{{ url_for('home') }}">Torna alla dashboard</a>
+</section>
+{% endblock %}
+
+{% block auth_content %}
+<div class="auth-card-heading">
+  <div>
+    <p class="section-kicker">Dati personali</p>
+    <h2 id="auth-title">Il tuo profilo</h2>
+  </div>
+</div>
+<p class="auth-card-copy">Email verificata: <strong>{{ current_user.email }}</strong></p>
+<form class="auth-form" method="post" action="{{ url_for('auth.profile') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" value="details">
+  {% include "_profile_fields.html" %}
+  <button class="button button-primary auth-submit" type="submit">Salva profilo</button>
+</form>
+
+<section class="profile-password-section" aria-labelledby="password-title">
+  <h2 id="password-title">Cambia password</h2>
+  <p class="auth-card-copy">Inserisci la password attuale e scegli quella nuova.</p>
+  <form class="auth-form" method="post" action="{{ url_for('auth.profile') }}" data-password-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="password">
+    <div class="auth-field auth-password-field">
+      <label for="currentPassword">Password attuale</label>
+      <div class="auth-password-control">
+        <input id="currentPassword" name="current_password" type="password" autocomplete="current-password"
+          maxlength="128" required>
+        <button class="auth-password-toggle" type="button" data-password-toggle aria-controls="currentPassword"
+          aria-label="Mostra password"><span aria-hidden="true">◉</span></button>
+      </div>
+    </div>
+    {% set password_prefix = "profile" %}
+    {% include "_new_password_fields.html" %}
+    <button class="button button-primary auth-submit" type="submit">Salva nuova password</button>
+  </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='js/username-availability.js') }}"></script>
+{% endblock %}

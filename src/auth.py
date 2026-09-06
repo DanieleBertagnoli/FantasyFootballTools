@@ -32,17 +32,22 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from auth_db import (
     AuthDatabaseError,
+    AuthPasswordChangedError,
     AuthTokenError,
     AuthUser,
     EmailAlreadyRegisteredError,
+    UsernameAlreadyRegisteredError,
     TOKEN_PURPOSE_EMAIL_VERIFICATION,
     TOKEN_PURPOSE_PASSWORD_RESET,
     consume_email_verification_token,
     consume_password_reset_token,
     create_one_time_token,
     create_user,
+    change_user_password,
     get_user_by_email,
     get_user_by_id,
+    get_user_by_username,
+    update_user_profile,
 )
 from auth_mail import AuthMailError, send_password_reset_email, send_verification_email
 
@@ -186,9 +191,35 @@ def validate_password(value: Any, confirmation: Any | None = None) -> str:
         raise AuthValidationError("La password deve includere almeno un simbolo.")
     if value.casefold() in _COMMON_PASSWORDS:
         raise AuthValidationError("Scegli una password meno comune.")
-    if confirmation is not None and (not isinstance(confirmation, str) or not hmac.compare_digest(value, confirmation)):
+    if confirmation is not None and (not isinstance(confirmation, str) or not hmac.compare_digest(value.encode(), confirmation.encode())):
         raise AuthValidationError("Le due password non coincidono.")
     return value
+
+
+def _normalise_name(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 80 or not value.isprintable():
+        raise AuthValidationError(f"Inserisci {label} (da 1 a 80 caratteri).")
+    return value.strip()
+
+
+def _normalise_username(value: Any) -> str:
+    if not isinstance(value, str):
+        raise AuthValidationError("Inserisci un nome utente.")
+    username = value.strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.]{2,31}", username):
+        raise AuthValidationError(
+            "Il nome utente deve contenere da 3 a 32 caratteri: lettere senza accenti, "
+            "numeri, punti o underscore. Deve iniziare con una lettera o un numero."
+        )
+    return username
+
+
+def _profile_form_values() -> dict[str, str]:
+    return {
+        "first_name": _normalise_name(request.form.get("first_name"), "il nome"),
+        "last_name": _normalise_name(request.form.get("last_name"), "il cognome"),
+        "username": _normalise_username(request.form.get("username")),
+    }
 
 
 def _csrf_token() -> str:
@@ -270,7 +301,16 @@ def _build_external_url(endpoint: str, **values: Any) -> str:
     path = url_for(endpoint, **values)
     configured_base = current_app.config.get("APP_BASE_URL")
     if isinstance(configured_base, str) and configured_base.strip():
-        return configured_base.rstrip("/") + path
+        base = urlsplit(configured_base.strip())
+        # This deployment's historical www alias has no working HTTPS site.
+        # Keep existing configuration usable without rewriting other domains.
+        if base.hostname == "www.fantaasta.danielebertagnoli.it":
+            base = base._replace(
+                netloc=base.netloc.replace(
+                    base.hostname, "fantaasta.danielebertagnoli.it"
+                )
+            )
+        return base.geturl().rstrip("/") + path
     return url_for(endpoint, _external=True, **values)
 
 
@@ -307,6 +347,12 @@ def _render_form(template_name: str, *, status: int = 200, **values: Any) -> tup
 
 
 auth_bp = Blueprint("auth", __name__)
+
+
+@auth_bp.after_request
+def prevent_account_caching(response: Response) -> Response:
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @auth_bp.before_app_request
@@ -367,16 +413,20 @@ def signup() -> Response | tuple[str, int] | str:
     try:
         _validate_csrf()
         email = _normalise_email(request.form.get("email"))
+        profile = _profile_form_values()
         password = validate_password(
             request.form.get("password"),
-            request.form.get("password_confirmation"),
+            request.form.get("password_confirmation", ""),
         )
     except AuthValidationError as error:
         flash(str(error), "error")
         return _render_form("signup.html", status=400, email=request.form.get("email", ""), next_url=_requested_next())
 
     try:
-        user = create_user(email, generate_password_hash(password))
+        user = create_user(email, generate_password_hash(password), **profile)
+    except UsernameAlreadyRegisteredError as error:
+        flash(str(error), "error")
+        return _render_form("signup.html", status=409, next_url=_requested_next())
     except EmailAlreadyRegisteredError:
         existing = get_user_by_email(email)
         if existing is not None and not existing.email_confirmed:
@@ -415,7 +465,8 @@ def login() -> Response | tuple[str, int] | str:
 
     try:
         _validate_csrf()
-        email = _normalise_email(request.form.get("email"))
+        identifier = request.form.get("identifier", request.form.get("email", "")).strip()
+        identifier = _normalise_email(identifier) if "@" in identifier else _normalise_username(identifier)
     except AuthValidationError as error:
         flash(str(error), "error")
         return _render_form("login.html", status=400, email=request.form.get("email", ""), next_url=_requested_next())
@@ -423,18 +474,18 @@ def login() -> Response | tuple[str, int] | str:
     password = request.form.get("password")
     if not isinstance(password, str):
         password = ""
-    user = get_user_by_email(email)
+    user = get_user_by_email(identifier) if "@" in identifier else get_user_by_username(identifier)
     password_hash = user.password_hash if user is not None else _dummy_password_hash()
     password_matches = check_password_hash(password_hash, password)
     if user is None or not password_matches:
-        flash("Email o password non corretti.", "error")
-        return _render_form("login.html", status=401, email=email, next_url=_requested_next())
+        flash("Email, nome utente o password non corretti.", "error")
+        return _render_form("login.html", status=401, next_url=_requested_next())
     if not user.email_confirmed:
         flash("Devi prima confermare l'account dal link ricevuto via email.", "error")
         return _render_form(
             "login.html",
             status=403,
-            email=email,
+            email=user.email,
             next_url=_requested_next(),
             show_resend_confirmation=True,
         )
@@ -450,6 +501,62 @@ def logout() -> Response:
     _clear_session()
     flash("Hai effettuato il logout.", "success")
     return redirect(url_for("auth.login"))
+
+
+@auth_bp.get("/api/auth/username-availability")
+def username_availability() -> Response:
+    try:
+        username = _normalise_username(request.args.get("username"))
+    except AuthValidationError as error:
+        return jsonify({"available": False, "message": str(error)}), 400
+    existing = get_user_by_username(username)
+    user = _current_user()
+    available = existing is None or (user is not None and existing.id == user.id)
+    return jsonify({
+        "available": available,
+        "message": "Nome utente disponibile." if available else "Questo nome utente è già in uso.",
+    })
+
+
+@auth_bp.route("/profile", methods=["GET", "POST"])
+def profile() -> Response | tuple[str, int] | str:
+    # Auth endpoints are public by default; a profile always requires a
+    # verified session, even when login protection is disabled for development.
+    user = _current_user()
+    if user is None:
+        return redirect(url_for("auth.login", next=url_for("auth.profile")))
+    if request.method == "GET":
+        return _render_form("profile.html")
+
+    try:
+        _validate_csrf()
+        if request.form.get("action") == "details":
+            update_user_profile(user.id, **_profile_form_values())
+            flash("Profilo aggiornato.", "success")
+        elif request.form.get("action") == "password":
+            credentials = get_user_by_email(user.email)
+            if (
+                credentials is None
+                or credentials.session_version != user.session_version
+                or not check_password_hash(credentials.password_hash, request.form.get("current_password", ""))
+            ):
+                raise AuthValidationError("La password attuale non è corretta. Riprova.")
+            password = validate_password(
+                request.form.get("password"), request.form.get("password_confirmation", "")
+            )
+            change_user_password(credentials, generate_password_hash(password))
+            _start_session(user)
+            session[SESSION_VERSION_KEY] = user.session_version + 1
+            flash("Password aggiornata. Le altre sessioni sono state disconnesse.", "success")
+        else:
+            raise AuthValidationError("Operazione non valida.")
+    except UsernameAlreadyRegisteredError as error:
+        flash(str(error), "error")
+        return _render_form("profile.html", status=409)
+    except (AuthValidationError, AuthPasswordChangedError) as error:
+        flash(str(error), "error")
+        return _render_form("profile.html", status=400)
+    return redirect(url_for("auth.profile"))
 
 
 @auth_bp.post("/resend-confirmation")
@@ -536,7 +643,7 @@ def reset_password(token: str) -> Response | tuple[str, int] | str:
         _validate_csrf()
         password = validate_password(
             request.form.get("password"),
-            request.form.get("password_confirmation"),
+            request.form.get("password_confirmation", ""),
         )
     except AuthValidationError as error:
         flash(str(error), "error")

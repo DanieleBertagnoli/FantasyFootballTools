@@ -1,9 +1,37 @@
 networks:
   fantasy_football_tools_network:
     name: fantasy_football_tools_network
-    internal: false
+    internal: true
+
+  npm_network:
+    name: npm_network
+    external: true
 
 services:
+  storage-init:
+    build:
+      context: .
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /app/persistent_data/bid_manager_auctions /app/persistent_data/notes_manager_notes
+        chown 1000:1000 /app/persistent_data
+        chown -hR 1000:1000 /app/persistent_data/bid_manager_auctions /app/persistent_data/notes_manager_notes
+        chmod u+rwx /app/persistent_data /app/persistent_data/bid_manager_auctions /app/persistent_data/notes_manager_notes
+    volumes:
+      - ./persistent_data:/app/persistent_data
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    restart: "no"
+
   fantasy-football-tools:
     container_name: fantasy-football-tools
     build:
@@ -14,7 +42,6 @@ services:
       - "127.0.0.1:${APP_PORT:-5010}:5010"
     volumes:
       - ./persistent_data:/app/persistent_data
-    read_only: true
     tmpfs:
       - /tmp
     security_opt:
@@ -29,10 +56,13 @@ services:
       retries: 3
       start_period: 20s
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       fantasy-football-tools-db:
         condition: service_healthy
     restart: unless-stopped
     networks:
+      - npm_network
       - fantasy_football_tools_network
 
   fantasy-football-tools-db:

@@ -7,14 +7,14 @@
   function savedTheme() {
     try {
       const theme = window.localStorage.getItem(STORAGE_KEY);
-      return THEMES.has(theme) ? theme : "green";
+      return THEMES.has(theme) ? theme : "blue";
     } catch {
-      return "green";
+      return "blue";
     }
   }
 
   function applyTheme(theme) {
-    const selectedTheme = THEMES.has(theme) ? theme : "green";
+    const selectedTheme = THEMES.has(theme) ? theme : "blue";
     document.documentElement.dataset.theme = selectedTheme;
     document.querySelectorAll("[data-theme-choice]").forEach((button) => {
       const isCurrent = button.dataset.themeChoice === selectedTheme;

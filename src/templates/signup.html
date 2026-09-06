@@ -16,10 +16,11 @@
     <h2 id="auth-title">Crea il tuo account</h2>
   </div>
 </div>
-<p class="auth-card-copy">Registrati con la tua email: ti invieremo un link per confermare l'account.</p>
+<p class="auth-card-copy">Inserisci i tuoi dati: ti invieremo un link per confermare l'account.</p>
 
 <form class="auth-form" method="post" action="{{ url_for('auth.signup') }}" data-password-form>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% include "_profile_fields.html" %}
   <label class="auth-field" for="signupEmail">
     <span>Indirizzo email</span>
     <input id="signupEmail" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none"
@@ -68,4 +69,8 @@
 </form>
 
 <p class="auth-switch-copy">Hai già un account? <a class="auth-text-link" href="{{ url_for('auth.login') }}">Accedi</a></p>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='js/username-availability.js') }}"></script>
 {% endblock %}

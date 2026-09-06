@@ -19,9 +19,9 @@
       </a>
       {% if current_user %}
       <div class="header-account-controls">
-        <span class="header-status header-account-email" title="{{ current_user.email }}">
-          <span aria-hidden="true">●</span> {{ current_user.email }}
-        </span>
+        <a class="header-status header-account-name" href="{{ url_for('auth.profile') }}" aria-label="Profilo di {{ current_user.username }}">
+          <span aria-hidden="true">●</span> {{ current_user.username }}
+        </a>
         <details class="theme-picker">
           <summary aria-label="Scegli il tema del sito" title="Tema">▦</summary>
           <div class="theme-picker-panel" role="group" aria-label="Tema del sito">

@@ -1,0 +1,22 @@
+<div class="auth-name-fields">
+  <label class="auth-field" for="firstName">
+    <span>Nome</span>
+    <input id="firstName" name="first_name" autocomplete="given-name" maxlength="80"
+      value="{{ request.form.get('first_name', current_user.first_name if current_user else '') }}" required>
+  </label>
+  <label class="auth-field" for="lastName">
+    <span>Cognome</span>
+    <input id="lastName" name="last_name" autocomplete="family-name" maxlength="80"
+      value="{{ request.form.get('last_name', current_user.last_name if current_user else '') }}" required>
+  </label>
+</div>
+<div class="auth-field">
+  <label for="username">Nome utente</label>
+  <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false"
+    minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_.]{2,31}"
+    aria-describedby="usernameHelp usernameStatus" data-username-input
+    data-availability-url="{{ url_for('auth.username_availability') }}"
+    value="{{ request.form.get('username', current_user.username if current_user else '') }}" required>
+  <p id="usernameHelp" class="auth-field-note">Da 3 a 32 caratteri: lettere senza accenti, numeri, punti o underscore. Inizia con una lettera o un numero. Maiuscole e minuscole sono equivalenti.</p>
+  <p id="usernameStatus" class="auth-field-note" data-username-status role="status" aria-live="polite"></p>
+</div>

@@ -47,6 +47,14 @@ class EmailAlreadyRegisteredError(ValueError):
     """Raised when a unique email address is already present."""
 
 
+class UsernameAlreadyRegisteredError(ValueError):
+    """Raised when a username is already taken, including concurrent signup."""
+
+
+class AuthPasswordChangedError(ValueError):
+    """Raised when credentials changed after the current-password check."""
+
+
 class AuthTokenError(ValueError):
     """Raised for invalid, expired, or already-consumed one-time tokens."""
 
@@ -65,6 +73,9 @@ class AuthUser:
     session_version: int
     created_at: datetime | None = None
     email_confirmed_at: datetime | None = None
+    first_name: str = ""
+    last_name: str = ""
+    username: str = ""
 
 
 @dataclass(frozen=True)
@@ -178,7 +189,8 @@ def _run_transaction(operation: Callable[[Any], _Result]) -> _Result:
             result = operation(cursor)
         connection.commit()
         return result
-    except (AuthDatabaseError, EmailAlreadyRegisteredError, AuthTokenError, AuthUserNotFoundError):
+    except (AuthDatabaseError, EmailAlreadyRegisteredError, UsernameAlreadyRegisteredError,
+            AuthPasswordChangedError, AuthTokenError, AuthUserNotFoundError):
         connection.rollback()
         raise
     except Exception as error:
@@ -241,7 +253,41 @@ def ensure_auth_schema() -> None:
                 """
             )
 
-        _run_transaction(create_schema)
+        def migrate_schema(cursor: Any) -> None:
+            # DDL commits implicitly; a connection-scoped lock also serializes
+            # migrations across Gunicorn workers and survives those commits.
+            cursor.execute("SELECT GET_LOCK(CONCAT(DATABASE(), ':auth_schema'), 10) AS acquired")
+            if cursor.fetchone()["acquired"] != 1:
+                raise AuthDatabaseError("Aggiornamento del database account in corso. Riprova.")
+            try:
+                create_schema(cursor)
+                cursor.execute("SHOW COLUMNS FROM users")
+                columns = {row["Field"]: row for row in cursor.fetchall()}
+                if {"first_name", "last_name", "username"} <= columns.keys() and columns["username"]["Null"] == "NO":
+                    return
+                cursor.execute("""
+                    ALTER TABLE users
+                        ADD COLUMN IF NOT EXISTS first_name VARCHAR(80) NOT NULL DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS last_name VARCHAR(80) NOT NULL DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS username VARCHAR(32) NULL,
+                        ADD UNIQUE INDEX IF NOT EXISTS uq_users_username (username)
+                """)
+                cursor.execute("SELECT id FROM users WHERE username IS NULL ORDER BY id")
+                for row in cursor.fetchall():
+                    candidate = f"utente_{row['id']}"
+                    while True:
+                        try:
+                            cursor.execute("UPDATE users SET username = %s WHERE id = %s", (candidate, row["id"]))
+                            break
+                        except Exception as error:
+                            if not _is_duplicate_key_error(error):
+                                raise
+                            candidate = f"utente_{row['id']}_{secrets.token_hex(3)}"
+                cursor.execute("ALTER TABLE users MODIFY COLUMN username VARCHAR(32) NOT NULL")
+            finally:
+                cursor.execute("SELECT RELEASE_LOCK(CONCAT(DATABASE(), ':auth_schema'))")
+
+        _run_transaction(migrate_schema)
         current_app.extensions["auth_schema_ready"] = True
 
 
@@ -253,6 +299,9 @@ def _user_from_row(row: Mapping[str, Any], *, include_password_hash: bool = Fals
     user_kwargs = {
         "id": int(row["id"]),
         "email": str(row["email"]),
+        "first_name": str(row["first_name"]),
+        "last_name": str(row["last_name"]),
+        "username": str(row["username"]),
         "email_confirmed": bool(row["email_confirmed"]),
         "session_version": int(row["session_version"]),
         "created_at": _as_datetime(row.get("created_at")),
@@ -274,7 +323,7 @@ def get_user_by_email(email: str) -> AuthUserCredentials | None:
     def find_user(cursor: Any) -> AuthUserCredentials | None:
         cursor.execute(
             """
-            SELECT id, email, password_hash, email_confirmed, email_confirmed_at,
+            SELECT id, email, first_name, last_name, username, password_hash, email_confirmed, email_confirmed_at,
                    session_version, created_at
             FROM users
             WHERE email = %s
@@ -288,6 +337,24 @@ def get_user_by_email(email: str) -> AuthUserCredentials | None:
     return _run_transaction(find_user)
 
 
+def get_user_by_username(username: str) -> AuthUserCredentials | None:
+    """Look up usernames using the database's case-insensitive unique index."""
+
+    ensure_auth_schema()
+
+    def find_user(cursor: Any) -> AuthUserCredentials | None:
+        cursor.execute(
+            """SELECT id, email, first_name, last_name, username, password_hash,
+                      email_confirmed, email_confirmed_at, session_version, created_at
+               FROM users WHERE username = %s LIMIT 1""",
+            (username,),
+        )
+        row = cursor.fetchone()
+        return _user_from_row(row, include_password_hash=True) if row else None
+
+    return _run_transaction(find_user)
+
+
 def get_user_by_id(user_id: int) -> AuthUser | None:
     """Load the session-safe account data for a current session."""
 
@@ -296,7 +363,7 @@ def get_user_by_id(user_id: int) -> AuthUser | None:
     def find_user(cursor: Any) -> AuthUser | None:
         cursor.execute(
             """
-            SELECT id, email, email_confirmed, email_confirmed_at,
+            SELECT id, email, first_name, last_name, username, email_confirmed, email_confirmed_at,
                    session_version, created_at
             FROM users
             WHERE id = %s
@@ -310,7 +377,7 @@ def get_user_by_id(user_id: int) -> AuthUser | None:
     return _run_transaction(find_user)
 
 
-def create_user(email: str, password_hash: str) -> AuthUser:
+def create_user(email: str, password_hash: str, *, first_name: str, last_name: str, username: str) -> AuthUser:
     """Insert an unconfirmed user, translating the unique-email constraint."""
 
     ensure_auth_schema()
@@ -321,19 +388,24 @@ def create_user(email: str, password_hash: str) -> AuthUser:
             cursor.execute(
                 """
                 INSERT INTO users (
-                    email, password_hash, email_confirmed, session_version,
+                    email, password_hash, first_name, last_name, username, email_confirmed, session_version,
                     created_at, updated_at
-                ) VALUES (%s, %s, 0, 1, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, 0, 1, %s, %s)
                 """,
-                (email, password_hash, now, now),
+                (email, password_hash, first_name, last_name, username, now, now),
             )
         except Exception as error:
             if _is_duplicate_key_error(error):
+                if "uq_users_username" in str(error):
+                    raise UsernameAlreadyRegisteredError("Questo nome utente è già in uso.") from error
                 raise EmailAlreadyRegisteredError("Esiste già un account con questa email.") from error
             raise
         return AuthUser(
             id=int(cursor.lastrowid),
             email=email,
+            first_name=first_name,
+            last_name=last_name,
+            username=username,
             email_confirmed=False,
             session_version=1,
             created_at=now,
@@ -344,6 +416,51 @@ def create_user(email: str, password_hash: str) -> AuthUser:
 
 def _hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def update_user_profile(user_id: int, *, first_name: str, last_name: str, username: str) -> None:
+    """Update personal details without changing the verified email address."""
+
+    ensure_auth_schema()
+
+    def update_profile(cursor: Any) -> None:
+        try:
+            cursor.execute(
+                """UPDATE users SET first_name = %s, last_name = %s, username = %s,
+                       updated_at = %s WHERE id = %s""",
+                (first_name, last_name, username, _utc_now(), user_id),
+            )
+        except Exception as error:
+            if _is_duplicate_key_error(error):
+                raise UsernameAlreadyRegisteredError("Questo nome utente è già in uso.") from error
+            raise
+
+    _run_transaction(update_profile)
+
+
+def change_user_password(user: AuthUserCredentials, password_hash: str) -> None:
+    """Replace checked credentials atomically and revoke sessions/reset links."""
+
+    ensure_auth_schema()
+    now = _utc_now()
+
+    def change_password(cursor: Any) -> None:
+        cursor.execute(
+            """UPDATE users SET password_hash = %s, session_version = session_version + 1,
+                   updated_at = %s
+               WHERE id = %s AND password_hash = %s AND session_version = %s
+                   AND email_confirmed = 1""",
+            (password_hash, now, user.id, user.password_hash, user.session_version),
+        )
+        if cursor.rowcount != 1:
+            raise AuthPasswordChangedError("Le credenziali sono cambiate. Accedi di nuovo e riprova.")
+        cursor.execute(
+            """UPDATE auth_tokens SET used_at = %s
+               WHERE user_id = %s AND purpose = %s AND used_at IS NULL""",
+            (now, user.id, TOKEN_PURPOSE_PASSWORD_RESET),
+        )
+
+    _run_transaction(change_password)
 
 
 def create_one_time_token(
@@ -402,7 +519,7 @@ def consume_email_verification_token(raw_token: str) -> AuthUser:
         cursor.execute(
             """
             SELECT t.id AS token_id, t.expires_at, t.used_at,
-                   u.id, u.email, u.email_confirmed, u.email_confirmed_at,
+                   u.id, u.email, u.first_name, u.last_name, u.username, u.email_confirmed, u.email_confirmed_at,
                    u.session_version, u.created_at
             FROM auth_tokens AS t
             INNER JOIN users AS u ON u.id = t.user_id
@@ -438,6 +555,9 @@ def consume_email_verification_token(raw_token: str) -> AuthUser:
         return AuthUser(
             id=int(row["id"]),
             email=str(row["email"]),
+            first_name=str(row["first_name"]),
+            last_name=str(row["last_name"]),
+            username=str(row["username"]),
             email_confirmed=True,
             session_version=int(row["session_version"]),
             created_at=_as_datetime(row.get("created_at")),
@@ -458,7 +578,7 @@ def consume_password_reset_token(raw_token: str, password_hash: str) -> AuthUser
         cursor.execute(
             """
             SELECT t.id AS token_id, t.expires_at, t.used_at,
-                   u.id, u.email, u.email_confirmed, u.email_confirmed_at,
+                   u.id, u.email, u.first_name, u.last_name, u.username, u.email_confirmed, u.email_confirmed_at,
                    u.session_version, u.created_at
             FROM auth_tokens AS t
             INNER JOIN users AS u ON u.id = t.user_id
@@ -498,6 +618,9 @@ def consume_password_reset_token(raw_token: str, password_hash: str) -> AuthUser
         return AuthUser(
             id=int(row["id"]),
             email=str(row["email"]),
+            first_name=str(row["first_name"]),
+            last_name=str(row["last_name"]),
+            username=str(row["username"]),
             email_confirmed=True,
             session_version=int(row["session_version"]) + 1,
             created_at=_as_datetime(row.get("created_at")),

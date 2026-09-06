@@ -22,10 +22,10 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   {% set login_next = next_url|default(request.args.get('next', ''), true) %}
   {% if login_next %}<input type="hidden" name="next" value="{{ login_next }}">{% endif %}
-  <label class="auth-field" for="loginEmail">
-    <span>Indirizzo email</span>
-    <input id="loginEmail" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none"
-      spellcheck="false" maxlength="254" placeholder="nome@esempio.it" value="{{ request.form.get('email', '') }}" required>
+  <label class="auth-field" for="loginIdentifier">
+    <span>Email o nome utente</span>
+    <input id="loginIdentifier" name="identifier" type="text" autocomplete="username" autocapitalize="none"
+      spellcheck="false" maxlength="254" placeholder="Email o nome utente" value="{{ request.form.get('identifier', request.form.get('email', '')) }}" required>
   </label>
 
   <div class="auth-field auth-password-field">
