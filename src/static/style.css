@@ -15,6 +15,10 @@
   --gold: #ffc85a;
   --danger: #ff7269;
   --shadow: 0 22px 55px rgba(0, 0, 0, 0.28);
+  --auth-card-start: rgba(24, 57, 36, 0.95);
+  --auth-card-end: rgba(7, 26, 17, 0.97);
+  --auth-input: rgba(2, 14, 8, 0.5);
+  --auth-input-focus: rgba(3, 18, 10, 0.68);
   --radius-lg: 24px;
   --radius-md: 16px;
   --radius-sm: 11px;
@@ -64,6 +68,10 @@
   --gold: #ffd06a;
   --danger: #ff7d78;
   --shadow: 0 22px 55px rgba(0, 10, 24, 0.38);
+  --auth-card-start: rgba(20, 57, 88, 0.95);
+  --auth-card-end: rgba(7, 27, 48, 0.97);
+  --auth-input: rgba(3, 20, 36, 0.56);
+  --auth-input-focus: rgba(6, 31, 54, 0.74);
 }
 
 :root[data-theme="white"] {
@@ -83,6 +91,10 @@
   --gold: #9a6800;
   --danger: #c24b43;
   --shadow: 0 18px 45px rgba(26, 53, 35, 0.14);
+  --auth-card-start: rgba(255, 255, 255, 0.96);
+  --auth-card-end: rgba(238, 247, 240, 0.98);
+  --auth-input: rgba(241, 248, 243, 0.92);
+  --auth-input-focus: rgba(255, 255, 255, 1);
 }
 
 :root[data-theme="dark"] {
@@ -102,6 +114,10 @@
   --gold: #f4ca72;
   --danger: #ff827d;
   --shadow: 0 22px 55px rgba(0, 0, 0, 0.4);
+  --auth-card-start: rgba(48, 52, 64, 0.96);
+  --auth-card-end: rgba(29, 32, 40, 0.98);
+  --auth-input: rgba(16, 18, 24, 0.66);
+  --auth-input-focus: rgba(25, 28, 37, 0.86);
 }
 
 * {
@@ -3832,10 +3848,10 @@ select:focus-visible {
   height: 1.65em;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgba(184, 243, 74, 0.31);
+  border: 1px solid color-mix(in srgb, var(--accent) 31%, transparent);
   border-radius: 50%;
   color: var(--accent);
-  background: rgba(184, 243, 74, 0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   font-size: 0.83em;
 }
 
@@ -3844,10 +3860,10 @@ select:focus-visible {
   max-width: 480px;
   justify-self: end;
   padding: clamp(25px, 4vw, 42px);
-  border: 1px solid rgba(190, 230, 204, 0.18);
+  border: 1px solid var(--line-strong);
   border-radius: 26px;
-  background: linear-gradient(145deg, rgba(24, 57, 36, 0.95), rgba(7, 26, 17, 0.97));
-  box-shadow: 0 27px 64px rgba(0, 0, 0, 0.34);
+  background: linear-gradient(145deg, var(--auth-card-start), var(--auth-card-end));
+  box-shadow: var(--shadow);
   backdrop-filter: blur(16px);
 }
 
@@ -3863,10 +3879,10 @@ select:focus-visible {
   height: 46px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgba(184, 243, 74, 0.28);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   border-radius: 14px;
   color: var(--accent);
-  background: rgba(184, 243, 74, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   font-size: var(--font-size-21);
   line-height: 1;
 }
@@ -3926,7 +3942,7 @@ select:focus-visible {
   border-radius: 10px;
   outline: 0;
   color: var(--ink);
-  background: rgba(2, 14, 8, 0.5);
+  background: var(--auth-input);
   font-size: var(--font-size-13);
   font-weight: 700;
   line-height: 1.2;
@@ -3934,18 +3950,18 @@ select:focus-visible {
 }
 
 .auth-field input::placeholder {
-  color: #6e8377;
+  color: var(--muted);
   font-weight: 500;
 }
 
 .auth-field input:hover {
-  border-color: rgba(184, 243, 74, 0.35);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .auth-field input:focus {
   border-color: var(--accent);
-  background: rgba(3, 18, 10, 0.68);
-  box-shadow: 0 0 0 3px rgba(184, 243, 74, 0.12);
+  background: var(--auth-input-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .auth-field input[aria-invalid="true"] {
@@ -3988,7 +4004,7 @@ select:focus-visible {
 
 .auth-password-toggle:hover {
   color: var(--accent);
-  background: rgba(184, 243, 74, 0.09);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
 .auth-password-toggle.is-visible {
@@ -4118,7 +4134,7 @@ select:focus-visible {
   color: var(--accent);
   font-weight: 800;
   text-decoration: underline;
-  text-decoration-color: rgba(184, 243, 74, 0.42);
+  text-decoration-color: color-mix(in srgb, var(--accent) 42%, transparent);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
   transition: color 150ms ease, text-decoration-color 150ms ease;
@@ -5006,4 +5022,40 @@ select:focus-visible {
 :root[data-theme="white"] .legal-site-header {
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 1px 0 rgba(24, 70, 41, 0.08);
+}
+
+/* Account controls deliberately have an explicit surface so they cannot keep
+   an earlier green declaration when a theme is changed at runtime. */
+:root[data-theme] .auth-card {
+  border-color: var(--line-strong);
+  background: linear-gradient(145deg, var(--auth-card-start), var(--auth-card-end));
+  box-shadow: var(--shadow);
+}
+
+:root[data-theme] .auth-field input {
+  border-color: var(--line-strong);
+  color: var(--ink);
+  background: var(--auth-input);
+}
+
+:root[data-theme] .auth-field input:focus {
+  border-color: var(--accent);
+  background: var(--auth-input-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root[data-theme] .auth-card-icon,
+:root[data-theme] .auth-feature-list li > span,
+:root[data-theme] .auth-flash-icon,
+:root[data-theme] .auth-message-icon-success {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root[data-theme] .auth-flash,
+:root[data-theme] .auth-message-icon {
+  border-color: var(--line);
+  color: var(--muted-strong);
+  background: var(--surface-light);
 }
