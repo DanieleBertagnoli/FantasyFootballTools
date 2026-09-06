@@ -2234,12 +2234,7 @@ select:focus-visible {
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   color: var(--ink);
-  background:
-    radial-gradient(circle at 27% 28%, #b8f34a 0 13%, transparent 14%),
-    radial-gradient(circle at 73% 27%, #55caff 0 13%, transparent 14%),
-    radial-gradient(circle at 27% 73%, #ffffff 0 13%, transparent 14%),
-    radial-gradient(circle at 73% 73%, #2b303c 0 13%, transparent 14%),
-    var(--surface-light);
+  background: var(--surface-light);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   cursor: pointer;
   font-size: 0;
@@ -2252,12 +2247,10 @@ select:focus-visible {
 }
 
 .theme-picker > summary::after {
-  width: 12px;
-  height: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.9);
-  border-radius: 50%;
-  content: "";
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.34));
+  content: "🎨";
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.22));
+  font-size: 19px;
+  line-height: 1;
 }
 
 .theme-picker > summary:hover,
@@ -2387,7 +2380,7 @@ select:focus-visible {
 :root[data-theme="white"] .auction-site-header,
 :root[data-theme="white"] .notes-site-header,
 :root[data-theme="white"] .auth-site-header {
-  background: rgba(255, 255, 255, 0.78);
+  background: transparent;
 }
 
 @media (max-width: 600px) {
@@ -5020,8 +5013,8 @@ select:focus-visible {
 :root[data-theme="white"] .notes-site-header,
 :root[data-theme="white"] .auth-site-header,
 :root[data-theme="white"] .legal-site-header {
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 1px 0 rgba(24, 70, 41, 0.08);
+  background: transparent;
+  box-shadow: none;
 }
 
 /* Account controls deliberately have an explicit surface so they cannot keep
